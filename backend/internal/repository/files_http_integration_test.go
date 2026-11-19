@@ -126,6 +126,21 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 	}
 	resp = request(s, http.MethodGet, "/v1/files/"+file.ID, foreign.Key, "", nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	t.Run("feature off rollback preserves durable resources", func(t *testing.T) {
+		fc.Enabled = false
+		disabled := newServer()
+		resp := request(disabled, http.MethodGet, "/v1/files/"+file.ID, key.Key, "", nil)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		disabled.Close()
+		fc.Enabled = true
+		reenabled := newServer()
+		defer reenabled.Close()
+		resp = request(reenabled, http.MethodGet, "/v1/files/"+file.ID+"/content", rotated.Key, "", nil)
+		got, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, payload, got, "rollback must preserve ID, durable record and original bytes")
+	})
 
 	t.Run("current authentication policy", func(t *testing.T) {
 		for _, mode := range []string{"", config.RunModeSimple} {
