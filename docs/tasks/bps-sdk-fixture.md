@@ -47,3 +47,16 @@ Files 在同一主仓 base_url 使用真实鉴权和落盘服务，配置仅在�
 - main binary SHA256：`a4f36e69cab0b21d93d789b8f2c1c41056082be035e47c63bd5b5a5488f18bb8`；seed：`399d04e7b24d4c9d8e920dac57e65d0bb0980fb349c7a3c5b13ceba2aaeffe57`；gateway fixture：`c56409ae109dbcb6487d165ae20c745354d7db026269c2bbb98dd6e0f8002298`。
 
 最终复验 runner_source_sha256 为 `7319cef42ccc03a03f832a8288a58604abcf3ee2fec4f2d86fb001cf93f0987b`。持久脱敏报告位于附件仓 `pixcook-ai/bps-gateway` commit `0dc4a2c` 的 `scripts/sdk-conformance/evidence/files-large-restart-source-20261120.json` 与 `files-sdk-source-20261120.json`；本机报告：`/private/tmp/bps-main-files-source-sdk-20261120.report.json`、`/private/tmp/bps-main-files-large-restart-20261120.report.json`。客户端临时 33 MiB 文件已删除。服务端 fixture 暂为后续请求政策/SSE 验收保留；本票 #2 的完整 lifecycle 清理仍须实际退出后另记，不能从该 Files gate 推断已完成。上线持久卷、200 MiB 实际端到端和真实 BPS 文档理解未在本轮验证。
+
+
+## 请求政策与 SSE 组合诊断
+
+2026-11-20，新环境实际构建来源为 main `320048e9c41c48b55bbd123b48ebd5cbba165c88`、gateway/harness `e52546e79263ab557ea78cb2a07b806c7b8f73f6`，来源校验为 true。真实 PG 读取确认 27 个唯一 Group、27 个唯一 Account，26 把 SDK 场景 key 加默认 A1/A2/B 共 29 条 key 关联逐项匹配，账号/组 active 且 schedulable。证据为 `/private/tmp/bps-main-policy-sse-pools-20261120.report.json`。
+
+双 SDK 共 44 场景诊断为 **30 通过、14 失败**，不能宣称全基线通过。每 SDK 的 policy-rejections、policy-catalog、tool-strict-default 共六场景通过；请求政策拒绝与 strict 默认拒绝的三项 BPS 计数均为 0，目录八步骤每 SDK 实际七次 BPS accepted generation。
+
+失败分布：两 SDK 默认 429 自动重试仍最终 503（后续独立修复）；四个 Files list/delete 为当前未实现的 404；两 SDK 的 failed-usage-sse/json、truncated/truncated-json 共八项协议场景失败。failed SSE 被主仓改成 HTTP 429、truncated SSE 终态 usage 丢失、失败 JSON 的安全诊断被主仓重写；incomplete 与 Unicode annotations 的 stream/JSON 八项正例通过。脱敏报告为 `/private/tmp/bps-main-policy-sse-20261120.report.json`。
+
+实际计费账目另行查询，没有用 SDK 诊断推断计费：仅查本次独立场景 Group/Account，失败与截断四族 × 两 SDK 均零条 usage_logs；incomplete/annotations stream/JSON × 两 SDK 各一条，input_tokens=6、cache_read_tokens=5、output_tokens=4，与 native input=11/output=4 的拆分规则一致。usage_logs.request_id 为 client UUID，与外层 x-request-id 不同，因此关联依据是已验证的一场景一 Group/Account。证据为 `/private/tmp/bps-main-policy-sse-ledger-20261120.report.json`。本轮未对失败计费门作通过声明。
+
+main 构建固定产物后，marker 源码树已交给后续 worker 复用；运行中二进制仍是上述精确来源，不随 checkout 改变。旧 Files 环境已正常退出，旧 main 不存在、容器和打开文件均无，输出 manifest 已移除，保留目录另经核对后删除 321,759,213 字节；脱敏报告保留。清理凭据为 `/private/tmp/bps-sdk-files-fixture-cleanup-20261120.json`。新环境仍为后续诊断保留，完整默认自动清理门待本轮退出后确认。
