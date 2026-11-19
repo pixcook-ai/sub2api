@@ -156,10 +156,23 @@ func run(args []string, out io.Writer) error {
 	users := repository.NewUserRepository(client, sqlDB)
 	keys := repository.NewAPIKeyRepository(client, sqlDB)
 	accounts := repository.NewAdminAccountRepository(client, sqlDB, nil)
-	scenarios := []string{"default", "python/upstream429-no-retry", "python/upstream429-default-retry", "python/truncated", "javascript/upstream429-no-retry", "javascript/upstream429-default-retry", "javascript/truncated"}
+	// Keep each SDK scenario in its own scheduling pool. Catalog steps deliberately
+	// share one case/pool so a rejected update must preserve its prior session.
+	scenarios := []string{"default"}
+	for _, sdk := range []string{"python", "javascript"} {
+		for _, scenario := range []string{
+			"upstream429-no-retry", "upstream429-default-retry", "truncated",
+			"policy-rejections", "policy-catalog", "tool-strict-default",
+			"failed-usage-sse", "failed-usage-json", "truncated-json",
+			"incomplete-sse", "incomplete-json", "annotations-sse", "annotations-json",
+		} {
+			scenarios = append(scenarios, sdk+"/"+scenario)
+		}
+	}
 	groupIDs := make([]int64, 0, len(scenarios))
 	groupByScenario := map[string]int64{}
 	accountIDs := []int64{}
+	accountByScenario := map[string]int64{}
 	upstreamBase := strings.TrimRight(gateway.BaseURL, "/")
 	if gatewayURL.Path == "" {
 		upstreamBase += "/v1"
@@ -176,6 +189,7 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 		accountIDs = append(accountIDs, account.ID)
+		accountByScenario[scenario] = account.ID
 	}
 	var userIDs []int64
 	for _, suffix := range []string{"a", "b"} {
@@ -217,7 +231,7 @@ func run(args []string, out io.Writer) error {
 		}
 		scenarioKeys[scenario] = path
 	}
-	manifest := map[string]any{"contract_version": 1, "source": "local", "seam": "main-auth-scheduler-gateway-bps", "main_base_url": fmt.Sprintf("http://127.0.0.1:%d/v1", cfg.Server.Port), "api_key_file": first, "same_user_key_file": same, "other_user_key_file": other, "scenario_api_key_files": scenarioKeys, "main_commit": *commit, "gateway_commit": gateway.Commit, "gateway_base_url": gateway.BaseURL, "bps_metrics_url": gateway.MetricsURL, "model": *model, "data_dir": *dir, "resources": map[string]any{"users": userIDs, "groups": groupIDs, "accounts": accountIDs}}
+	manifest := map[string]any{"contract_version": 1, "source": "local", "seam": "main-auth-scheduler-gateway-bps", "main_base_url": fmt.Sprintf("http://127.0.0.1:%d/v1", cfg.Server.Port), "api_key_file": first, "same_user_key_file": same, "other_user_key_file": other, "scenario_api_key_files": scenarioKeys, "main_commit": *commit, "gateway_commit": gateway.Commit, "gateway_base_url": gateway.BaseURL, "bps_metrics_url": gateway.MetricsURL, "model": *model, "data_dir": *dir, "resources": map[string]any{"users": userIDs, "groups": groupIDs, "accounts": accountIDs, "scenario_groups": groupByScenario, "scenario_accounts": accountByScenario}}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
