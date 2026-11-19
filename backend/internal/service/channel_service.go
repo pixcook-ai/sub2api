@@ -103,6 +103,7 @@ type channelCache struct {
 	// 冷路径（CRUD 操作）
 	byID     map[int64]*Channel
 	loadedAt time.Time
+	complete bool // successful DB snapshot; error fallback caches remain unproven
 }
 
 // ChannelMappingResult 渠道映射查找结果
@@ -336,6 +337,7 @@ func populateChannelCache(channels []Channel, groupPlatforms map[int64]string) *
 	cache.groupPlatform = groupPlatforms
 	cache.byID = make(map[int64]*Channel, len(channels))
 	cache.loadedAt = time.Now()
+	cache.complete = true
 
 	for i := range channels {
 		channels[i].normalizeBillingModelSource()

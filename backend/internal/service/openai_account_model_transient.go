@@ -162,6 +162,19 @@ func (s *openAIAccountModelTransientState) isBlocked(accountID int64, model stri
 	return !entry.blockUntil.IsZero() && now.Before(entry.blockUntil)
 }
 
+// peekBlocked reads the same cooldown decision without touching, expiring, or
+// evicting entries. Error diagnosis must not change scheduler state.
+func (s *openAIAccountModelTransientState) peekBlocked(accountID int64, model string, now time.Time) bool {
+	key, ok := openAIAccountModelTransientKey(accountID, model)
+	if s == nil || !ok {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, exists := s.entries[key]
+	return exists && (entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) <= openAIModelTransientStreakTTL) && now.Before(entry.blockUntil)
+}
+
 func (s *openAIAccountModelTransientState) size() int {
 	if s == nil {
 		return 0

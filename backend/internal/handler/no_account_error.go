@@ -3,10 +3,12 @@ package handler
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -131,6 +133,10 @@ func classifyNoAccountError(
 	}
 
 	result := diag.DiagnoseModelAvailabilityForPlatform(ctx, apiKey.GroupID, routingModel, platform)
+	return classifyModelAvailabilityResult(result, displayModel, fallback)
+}
+
+func classifyModelAvailabilityResult(result service.ModelAvailabilityDiagnosis, displayModel string, fallback noAccountErrorClassification) noAccountErrorClassification {
 	if result.HasAccountsInPool && !result.HasModelSupport {
 		message := fmt.Sprintf("Model %q is not supported by any configured account in this group", displayModel)
 		if result.HasRetiredSubscriptionModel {
@@ -198,4 +204,38 @@ func openAICompatibleSelectionErrorForLog(err error, platform string) error {
 		return err
 	}
 	return fmt.Errorf("%s", message)
+}
+
+// Only callers carrying the actual scheduler request may claim a proven
+// account-cooldown failure. Other endpoints keep their existing classification.
+func classifyOpenAISelectionAvailabilityFromGin(c *gin.Context, diag service.ModelAvailabilityDiagnoser, apiKey *service.APIKey, req service.OpenAIAccountScheduleRequest, displayModel string) noAccountErrorClassification {
+	selectionDiagnoser, ok := diag.(interface {
+		DiagnoseOpenAISelectionAvailability(context.Context, service.OpenAIAccountScheduleRequest) service.OpenAISelectionAvailability
+	})
+	if !ok || apiKey == nil || apiKey.GroupID == nil || req.GroupID == nil || *apiKey.GroupID != *req.GroupID || strings.TrimSpace(req.RequestedModel) == "" {
+		return classifyNoAccountErrorFromGin(c, diag, apiKey, req.RequestedModel, displayModel, req.Platform)
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	result := selectionDiagnoser.DiagnoseOpenAISelectionAvailability(ctx, req)
+	if strings.TrimSpace(displayModel) == "" {
+		displayModel = req.RequestedModel
+	}
+	cls := classifyModelAvailabilityResult(result.ModelAvailabilityDiagnosis, displayModel, noAccountErrorClassification{
+		Status: http.StatusServiceUnavailable, ErrType: "api_error", Message: "Service temporarily unavailable",
+	})
+	if cls.ModelNotFound {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+		return cls
+	}
+	if result.HasModelSupport && time.Now().Before(result.RetryAt) {
+		cls = noAccountErrorClassification{Status: http.StatusTooManyRequests, ErrType: "rate_limit_error", Message: "All available accounts are currently rate-limited. Please retry later."}
+		if c != nil && !c.Writer.Written() {
+			seconds := max(1, int(math.Ceil(time.Until(result.RetryAt).Seconds())))
+			c.Header("Retry-After", strconv.Itoa(seconds))
+		}
+	}
+	return cls
 }

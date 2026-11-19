@@ -734,7 +734,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 				}
-				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
+				cls := classifyOpenAISelectionAvailabilityFromGin(c, h.gatewayService, apiKey, service.OpenAIAccountScheduleRequest{
+					GroupID: apiKey.GroupID, Platform: requestPlatform, RequestedModel: forwardModel,
+					PreviousResponseID: previousResponseID, SessionHash: sessionHash,
+					RequiredTransport: service.OpenAIUpstreamTransportAny, RequiredCapability: requiredCapability,
+					RequireCompact: requireCompact,
+				}, reqModel)
 				cls = classifySelectionFailureError(err, cls)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -750,7 +755,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
+			cls := classifyOpenAISelectionAvailabilityFromGin(c, h.gatewayService, apiKey, service.OpenAIAccountScheduleRequest{
+				GroupID: apiKey.GroupID, Platform: requestPlatform, RequestedModel: forwardModel,
+				PreviousResponseID: previousResponseID, SessionHash: sessionHash,
+				RequiredTransport: service.OpenAIUpstreamTransportAny, RequiredCapability: requiredCapability,
+				RequireCompact: requireCompact,
+			}, reqModel)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
 			}

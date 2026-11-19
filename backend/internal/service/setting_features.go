@@ -1156,6 +1156,7 @@ func (s *SettingService) GetAccountSchedulingThresholds(ctx context.Context) map
 		}
 
 		thresholds := defaultAccountSchedulingThresholds()
+		complete := true
 		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountSchedulingThresholdsDBTimeout)
 		defer cancel()
 
@@ -1165,6 +1166,7 @@ func (s *SettingService) GetAccountSchedulingThresholds(ctx context.Context) map
 				accountSchedulingThresholdsCache.Store(&cachedAccountSchedulingThresholds{
 					thresholds: cloneAccountSchedulingThresholds(thresholds),
 					expiresAt:  time.Now().Add(accountSchedulingThresholdsCacheTTL).UnixNano(),
+					complete:   true,
 				})
 				return cloneAccountSchedulingThresholds(thresholds), nil
 			}
@@ -1179,6 +1181,7 @@ func (s *SettingService) GetAccountSchedulingThresholds(ctx context.Context) map
 		if trimmed := strings.TrimSpace(raw); trimmed != "" {
 			if parsed, err := parseAccountSchedulingThresholdsSetting(trimmed); err != nil {
 				slog.Warn("failed to parse account scheduling thresholds, falling back to defaults", "error", err)
+				complete = false
 			} else {
 				thresholds = parsed
 			}
@@ -1187,6 +1190,7 @@ func (s *SettingService) GetAccountSchedulingThresholds(ctx context.Context) map
 		accountSchedulingThresholdsCache.Store(&cachedAccountSchedulingThresholds{
 			thresholds: cloneAccountSchedulingThresholds(thresholds),
 			expiresAt:  time.Now().Add(accountSchedulingThresholdsCacheTTL).UnixNano(),
+			complete:   complete,
 		})
 		return cloneAccountSchedulingThresholds(thresholds), nil
 	})
