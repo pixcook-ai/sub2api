@@ -85,6 +85,11 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	if !ok {
 		return
 	}
+	key, _ := middleware.GetAPIKeyFromContext(c)
+	if key.Group == nil || key.Group.Platform != service.PlatformOpenAI {
+		fileError(c, http.StatusForbidden, "permission_denied", "File uploads require an OpenAI group", "unsupported_file_platform")
+		return
+	}
 	reader, err := c.Request.MultipartReader()
 	if err != nil {
 		fileError(c, 400, "invalid_request_error", "Expected multipart/form-data")

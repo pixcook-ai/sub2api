@@ -68,11 +68,23 @@ func (r *fileRepository) Reserve(ctx context.Context, file *service.StoredFile, 
 }
 
 func (r *fileRepository) CommitUpload(ctx context.Context, id int64, token string, size int64, sha, purpose string) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE gateway_files SET state='ready',bytes=$3,reserved_bytes=$3,
- sha256=$4,purpose=$5,upload_token=NULL,upload_lease_until=NULL,updated_at=clock_timestamp()
+	_, err := r.CommitUploadWithRetention(ctx, id, token, size, sha, purpose, nil)
+	return err
+}
+
+func (r *fileRepository) CommitUploadWithRetention(ctx context.Context, id int64, token string, size int64, sha, purpose string, retention *int64) (*service.StoredFile, error) {
+	if retention != nil && (*retention < 3600 || *retention > 2592000) {
+		return nil, service.ErrInvalidFileRetention
+	}
+	file, err := scanStoredFile(r.db.QueryRowContext(ctx, `UPDATE gateway_files SET state='ready',bytes=$3,reserved_bytes=$3,
+ sha256=$4,purpose=$5,expires_at=CASE WHEN $6::bigint IS NULL THEN NULL ELSE created_at+make_interval(secs=>$6::double precision) END,
+ upload_token=NULL,upload_lease_until=NULL,updated_at=clock_timestamp()
  WHERE id=$1 AND state='staging' AND upload_token=$2 AND upload_lease_until>clock_timestamp()
- AND $3>=0 AND $3<=reserved_bytes`, id, token, size, sha, purpose)
-	return fileCASResult(result, err)
+ AND $3>=0 AND $3<=reserved_bytes RETURNING `+fileColumns, id, token, size, sha, purpose, retention))
+	if errors.Is(err, service.ErrFileNotFound) {
+		return nil, service.ErrFileLeaseConflict
+	}
+	return file, err
 }
 
 func (r *fileRepository) AbortUpload(ctx context.Context, id int64, token string) (bool, error) {
@@ -87,7 +99,8 @@ func (r *fileRepository) AbortUpload(ctx context.Context, id int64, token string
 
 func (r *fileRepository) GetForOwner(ctx context.Context, userID, groupID int64, publicID string) (*service.StoredFile, error) {
 	return scanStoredFile(r.db.QueryRowContext(ctx, `SELECT `+fileColumns+` FROM gateway_files
- WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state='ready'`, publicID, userID, groupID))
+ WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state='ready'
+ AND (expires_at IS NULL OR expires_at>clock_timestamp())`, publicID, userID, groupID))
 }
 
 func (r *fileRepository) AcquireRead(ctx context.Context, userID, groupID int64, publicID, token string, lease time.Duration) (*service.StoredFile, error) {
@@ -103,6 +116,15 @@ func (r *fileRepository) AcquireRead(ctx context.Context, userID, groupID int64,
  WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state='ready' FOR UPDATE`, publicID, userID, groupID))
 	if err != nil {
 		return nil, err
+	}
+	// Check the clock after acquiring the file lock: a request may have
+	// waited behind retirement or another writer until after its expiry.
+	var now time.Time
+	if err = tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return nil, err
+	}
+	if file.ExpiresAt != nil && !file.ExpiresAt.After(now) {
+		return nil, service.ErrFileNotFound
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO gateway_file_read_leases(file_id,token,lease_until)
  VALUES($1,$2,clock_timestamp()+make_interval(secs=>$3::double precision))`, file.ID, token, lease.Seconds())

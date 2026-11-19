@@ -47,6 +47,7 @@ type FileRepository interface {
 	ListVisibleFiles(context.Context, FileOwner, FileListQuery) (FileListPage, error)
 	Reserve(context.Context, *StoredFile, int64, int64, time.Duration) error
 	CommitUpload(context.Context, int64, string, int64, string, string) error
+	CommitUploadWithRetention(context.Context, int64, string, int64, string, string, *int64) (*StoredFile, error)
 	AbortUpload(context.Context, int64, string) (bool, error)
 	GetForOwner(context.Context, int64, int64, string) (*StoredFile, error)
 	AcquireRead(context.Context, int64, int64, string, string, time.Duration) (*StoredFile, error)
@@ -132,6 +133,7 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 	var record *StoredFile
 	var purpose string
 	var purposeSeen bool
+	var expiry FileExpiryInput
 	var size int64
 	var hash string
 	var stop func() error
@@ -165,6 +167,17 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 			return nil, ErrInvalidFile
 		}
 		switch params["name"] {
+		case "expires_after[anchor]", "expires_after[seconds]":
+			if params["filename"] != "" {
+				return nil, ErrInvalidFile
+			}
+			value, err := io.ReadAll(io.LimitReader(part, 128))
+			if err != nil {
+				return nil, err
+			}
+			if err := expiry.Set(params["name"], string(value)); err != nil {
+				return nil, fmt.Errorf("%w: %w", ErrInvalidFile, err)
+			}
 		case "purpose":
 			if purposeSeen || params["filename"] != "" {
 				return nil, ErrInvalidFile
@@ -220,6 +233,10 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 	if record == nil || size == 0 || !validFilePurpose(purpose) {
 		return nil, fmt.Errorf("%w: a nonempty file and supported purpose are required", ErrInvalidFile)
 	}
+	retention, err := expiry.RetentionSeconds(purpose, s.cfg.DefaultRetentionSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidFile, err)
+	}
 	if err := stop(); err != nil {
 		stop = nil
 		return nil, err
@@ -231,11 +248,11 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 	if err := s.store.Commit(ctx, record.StorageKey); err != nil {
 		return nil, err
 	}
-	if err := s.repo.CommitUpload(ctx, record.ID, record.UploadToken, size, hash, purpose); err != nil {
+	committed, err := s.repo.CommitUploadWithRetention(ctx, record.ID, record.UploadToken, size, hash, purpose, retention)
+	if err != nil {
 		return nil, err
 	}
-	record.Bytes, record.ReservedBytes, record.SHA256, record.Purpose, record.State = size, size, hash, purpose, "ready"
-	return record, nil
+	return committed, nil
 }
 
 func validateFileMetadata(filename, contentType string) error {
