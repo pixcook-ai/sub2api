@@ -1,5 +1,15 @@
 # Development journal
 
+## 2026-11-20 — BPS policy rejection compatibility replay
+
+Issue `pixcook-ai/bps-gateway` #3 / parent #1. The required outbound identity convention is still absent, as documented in the previous entry; this patch preserves outbound identity and uses current source/tests. The actual official Python/JavaScript SDK report `/private/tmp/bps-main-policy-A-before-fix-20261120.report.json` reproduced `max_output_tokens=7` returning HTTP 200 after main removed the rejected control and forwarded twice.
+
+Gateway now adds `X-Bps-Request-Policy: rejected-v1` only for structured policy HTTP 400. Main recognizes the exact upstream response marker plus the agreed error shape and skips request-mutating compatibility replays; ordinary health, usage, failover and error handling remain in place. The marker never establishes nonexecution or billing exemptions. See `docs/conventions/bps-request-policy.md` for the narrow contract; WS and deferred plan 03 are unchanged.
+
+Red/green: the gateway authenticated HTTP regression first failed for a missing marker, then passed. The real `Forward` regression first returned success after the marked rejection, then preserved the original 400 and one outbound request. Negative controls cover inbound header spoofing, unknown marker version/case/duplicate values and malformed error shape while retaining ordinary unmarked parameter retries. These targeted service tests support development; the official double-SDK main combination gate remains pending and is required before issue closure.
+
+Affected regression: gateway proxy/sanitize 209 passed; main rejected-field normalization, retry budget, policy marker and related Forward/compact cases 66 passed. `git diff --check` passed in both repositories. No production inference, deployment, full build or whole-repository suite was run.
+
 ## 2026-11-20 — BPS compatibility 06: durable main Files
 
 The worktree AGENTS.md requires `docs/conventions/codex-outbound-identity.md`, latest `docs/dev-journal.md`, and `docs/tasks/` before implementation. These paths do not exist in this checkout or its owning main checkout. Exact-name search under the current project found no convention source; `git ls-files` and `git log --all -- docs/conventions/codex-outbound-identity.md docs/dev-journal.md docs/tasks` returned no entries. The coordinating agent explicitly authorized documenting the missing prerequisites and proceeding from current source/tests without reconstructing unknown conventions. Files work retains current outbound Codex identity behavior and adds only a separate authenticated storage boundary.

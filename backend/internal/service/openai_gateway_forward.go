@@ -1155,11 +1155,12 @@ func (s *OpenAIGatewayService) Forward(
 			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			policyRejected := isBPSRequestPolicyRejection(resp.StatusCode, resp.Header, respBody)
 
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 			upstreamCode := extractUpstreamErrorCode(respBody)
-			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
+			if !policyRejected && !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true
 				expectedTaskID := account.GetCredential("task_id")
 				if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
@@ -1174,7 +1175,7 @@ func (s *OpenAIGatewayService) Forward(
 					strings.Contains(upstreamMsg, "The encrypted content") &&
 					strings.Contains(upstreamMsg, "could not be verified") &&
 					strings.Contains(upstreamMsg, "could not be decrypted or parsed"))
-			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
+			if !policyRejected && !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
 					return nil, decodeErr
@@ -1198,35 +1199,37 @@ func (s *OpenAIGatewayService) Forward(
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
-			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
-				return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
-			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
-				body = retryBody
-				requestView = newOpenAIRequestView(body)
-				reqBody = nil
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
-				continue
-			}
-			if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
-				c, account, requestedModel, body, resp.StatusCode, upstreamMsg, respBody, compactModelFallbackRetried,
-			); retry {
-				if retryBody, err = withCompactFallbackInstructions(retryBody, liteFallbackInstructions); err != nil {
-					return nil, fmt.Errorf("set compact fallback instructions: %w", err)
+			if !policyRejected {
+				if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
+					return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
+				} else if changed && rejectedFieldRetryState.Allow(retryBody) {
+					body = retryBody
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
+					continue
 				}
-				s.appendOpenAICompactFallbackRetryOps(c, account, resp, respBody, upstreamMsg, false)
-				fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-				body = retryBody
-				requestView = newOpenAIRequestView(body)
-				reqBody = nil
-				upstreamModel = fallbackModel
-				compactModelFallbackRetried = true
-				SetOpsUpstreamModel(c, fallbackModel)
-				logger.LegacyPrintf(
-					"service.openai_gateway",
-					"[OpenAI] Retrying explicit compact request once with fallback model (account: %s, from: %s, to: %s, upstream_code: %s)",
-					account.Name, fromModel, fallbackModel, upstreamCode,
-				)
-				continue
+				if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
+					c, account, requestedModel, body, resp.StatusCode, upstreamMsg, respBody, compactModelFallbackRetried,
+				); retry {
+					if retryBody, err = withCompactFallbackInstructions(retryBody, liteFallbackInstructions); err != nil {
+						return nil, fmt.Errorf("set compact fallback instructions: %w", err)
+					}
+					s.appendOpenAICompactFallbackRetryOps(c, account, resp, respBody, upstreamMsg, false)
+					fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+					body = retryBody
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					upstreamModel = fallbackModel
+					compactModelFallbackRetried = true
+					SetOpsUpstreamModel(c, fallbackModel)
+					logger.LegacyPrintf(
+						"service.openai_gateway",
+						"[OpenAI] Retrying explicit compact request once with fallback model (account: %s, from: %s, to: %s, upstream_code: %s)",
+						account.Name, fromModel, fallbackModel, upstreamCode,
+					)
+					continue
+				}
 			}
 			if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
