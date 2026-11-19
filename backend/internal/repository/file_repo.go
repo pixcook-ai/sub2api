@@ -10,12 +10,20 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-type fileRepository struct{ db *sql.DB }
+type fileRepository struct {
+	db              *sql.DB
+	remoteLifecycle service.FileRemoteLifecyclePort
+}
 
 func NewFileRepository(db *sql.DB) service.FileRepository { return &fileRepository{db: db} }
 
+func NewFileRepositoryWithRemoteLifecycle(db *sql.DB, port service.FileRemoteLifecyclePort) service.FileRepository {
+	return &fileRepository{db: db, remoteLifecycle: port}
+}
+
 const fileColumns = `id, public_id, user_id, api_key_id, group_id, storage_key, filename, purpose, mime,
- state, bytes, reserved_bytes, sha256, COALESCE(upload_token, ''), created_at`
+ state, bytes, reserved_bytes, sha256, COALESCE(upload_token, ''), created_at,
+ expires_at, retired_at, read_drain_until, local_purged_at, lifecycle_version, remote_activity_possible`
 
 // All processes take this transaction lock before reserving disk budget. In
 // progress and pending-cleanup bytes remain charged until durable cleanup.
@@ -47,8 +55,8 @@ func (r *fileRepository) Reserve(ctx context.Context, file *service.StoredFile, 
 	err = tx.QueryRowContext(ctx, `INSERT INTO gateway_files
  (public_id,user_id,api_key_id,group_id,storage_key,filename,purpose,mime,state,reserved_bytes,upload_token,upload_lease_until)
  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'staging',$9,$10,clock_timestamp()+make_interval(secs=>$11::double precision))
- RETURNING id,created_at`, file.PublicID, file.UserID, file.APIKeyID, file.GroupID, file.StorageKey, file.Filename, file.Purpose, file.MIME,
-		file.ReservedBytes, file.UploadToken, lease.Seconds()).Scan(&file.ID, &file.CreatedAt)
+ RETURNING id,created_at,lifecycle_version`, file.PublicID, file.UserID, file.APIKeyID, file.GroupID, file.StorageKey, file.Filename, file.Purpose, file.MIME,
+		file.ReservedBytes, file.UploadToken, lease.Seconds()).Scan(&file.ID, &file.CreatedAt, &file.Version)
 	if err != nil {
 		return err
 	}
@@ -200,7 +208,8 @@ func fileCASResult(result sql.Result, err error) error {
 func scanStoredFile(row interface{ Scan(...any) error }) (*service.StoredFile, error) {
 	file := &service.StoredFile{}
 	err := row.Scan(&file.ID, &file.PublicID, &file.UserID, &file.APIKeyID, &file.GroupID, &file.StorageKey,
-		&file.Filename, &file.Purpose, &file.MIME, &file.State, &file.Bytes, &file.ReservedBytes, &file.SHA256, &file.UploadToken, &file.CreatedAt)
+		&file.Filename, &file.Purpose, &file.MIME, &file.State, &file.Bytes, &file.ReservedBytes, &file.SHA256, &file.UploadToken, &file.CreatedAt,
+		&file.ExpiresAt, &file.RetiredAt, &file.ReadDrainUntil, &file.LocalPurgedAt, &file.Version, &file.RemoteActivityPossible)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, service.ErrFileNotFound
 	}

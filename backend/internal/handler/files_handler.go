@@ -26,7 +26,59 @@ func fileOwner(c *gin.Context) (service.FileOwner, bool) {
 	return service.FileOwner{UserID: key.UserID, APIKeyID: key.ID, GroupID: *key.GroupID}, true
 }
 func fileObject(f *service.StoredFile) gin.H {
-	return gin.H{"id": f.PublicID, "object": "file", "bytes": f.Bytes, "created_at": f.CreatedAt.Unix(), "filename": f.Filename, "purpose": f.Purpose}
+	obj := gin.H{"id": f.PublicID, "object": "file", "bytes": f.Bytes, "created_at": f.CreatedAt.Unix(), "filename": f.Filename, "purpose": f.Purpose}
+	if f.ExpiresAt != nil {
+		obj["expires_at"] = f.ExpiresAt.Unix()
+	}
+	return obj
+}
+func (h *FileHandler) List(c *gin.Context) {
+	owner, ok := fileOwner(c)
+	if !ok {
+		return
+	}
+	query := c.Request.URL.Query()
+	for name, values := range query {
+		if len(values) != 1 || (name != "after" && name != "purpose" && name != "order" && name != "limit") {
+			fileError(c, 400, "invalid_request_error", "Invalid file list parameter", "invalid_request_error")
+			return
+		}
+	}
+	q := service.FileListQuery{After: query.Get("after"), Purpose: query.Get("purpose"), Order: "desc", Limit: 10000}
+	if _, present := query["after"]; present && q.After == "" {
+		fileError(c, 400, "invalid_request_error", "Invalid file cursor", "invalid_cursor")
+		return
+	}
+	if value, present := query["order"]; present {
+		q.Order = value[0]
+		if q.Order == "" {
+			fileError(c, 400, "invalid_request_error", "Invalid order", "invalid_request_error")
+			return
+		}
+	}
+	if value, present := query["limit"]; present {
+		n, err := strconv.Atoi(value[0])
+		if err != nil || n < 1 || n > 10000 {
+			fileError(c, 400, "invalid_request_error", "Invalid limit", "invalid_request_error")
+			return
+		}
+		q.Limit = n
+	}
+	page, err := h.files.List(c.Request.Context(), owner, q)
+	if err != nil {
+		handleFileError(c, err)
+		return
+	}
+	data := make([]gin.H, 0, len(page.Files))
+	for _, f := range page.Files {
+		data = append(data, fileObject(f))
+	}
+	var first, last *string
+	if len(page.Files) > 0 {
+		first = &page.Files[0].PublicID
+		last = &page.Files[len(page.Files)-1].PublicID
+	}
+	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data, "first_id": first, "last_id": last, "has_more": page.HasMore})
 }
 func (h *FileHandler) Upload(c *gin.Context) {
 	owner, ok := fileOwner(c)
@@ -77,12 +129,18 @@ func (h *FileHandler) Content(c *gin.Context) {
 	c.Status(http.StatusOK)
 	_, _ = io.CopyBuffer(c.Writer, reader, make([]byte, 32*1024))
 }
-func fileError(c *gin.Context, status int, kind, message string) {
-	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": kind, "param": nil, "code": nil}})
+func fileError(c *gin.Context, status int, kind, message string, code ...string) {
+	var value any
+	if len(code) > 0 {
+		value = code[0]
+	}
+	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": kind, "param": nil, "code": value}})
 }
 func handleFileError(c *gin.Context, err error) {
 	var bodyTooLarge *http.MaxBytesError
 	switch {
+	case errors.Is(err, service.ErrFileInvalidCursor):
+		fileError(c, 400, "invalid_request_error", "Invalid file cursor", "invalid_cursor")
 	case errors.Is(err, service.ErrFileNotFound):
 		fileError(c, 404, "invalid_request_error", "File not found")
 	case errors.Is(err, service.ErrFileTooLarge) || errors.As(err, &bodyTooLarge):

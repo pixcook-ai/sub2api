@@ -364,6 +364,9 @@ func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 }
 
 func isFileManagementRequest(method, path string) bool {
+	if method == http.MethodGet && path == "/v1/files" {
+		return true
+	}
 	if method == http.MethodPost {
 		return path == "/v1/files"
 	}

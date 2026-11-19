@@ -35,12 +35,16 @@ type StoredFile struct {
 	StorageKey, Filename, Purpose, MIME, State, UploadToken, SHA256 string
 	Bytes, ReservedBytes                                            int64
 	CreatedAt                                                       time.Time
+	ExpiresAt, RetiredAt, ReadDrainUntil, LocalPurgedAt             *time.Time
+	Version                                                         int64
+	RemoteActivityPossible                                          bool
 }
 
 type FileOwner struct{ UserID, APIKeyID, GroupID int64 }
 
 // FileRepository coordinates budgets and leases across all processes sharing the volume.
 type FileRepository interface {
+	ListVisibleFiles(context.Context, FileOwner, FileListQuery) (FileListPage, error)
 	Reserve(context.Context, *StoredFile, int64, int64, time.Duration) error
 	CommitUpload(context.Context, int64, string, int64, string, string) error
 	AbortUpload(context.Context, int64, string) (bool, error)

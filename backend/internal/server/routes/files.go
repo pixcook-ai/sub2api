@@ -15,6 +15,7 @@ func RegisterFileRoutes(r *gin.Engine, h *handler.FileHandler, auth middleware.A
 	}
 	files := r.Group("/v1/files")
 	files.Use(gin.HandlerFunc(auth))
+	files.GET("", h.List)
 	files.POST("", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.MaxUploadBodyBytes())
 		h.Upload(c)
