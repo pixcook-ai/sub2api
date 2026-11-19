@@ -52,6 +52,12 @@ type GrokOAuthRefreshMutationRepository interface {
 	SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, expectedProxyID *int64, until time.Time, reason string) (bool, error)
 }
 
+// OpenAIOAuthRefreshErrorRepository records a background refresh rejection
+// without changing the administrator's scheduling switch.
+type OpenAIOAuthRefreshErrorRepository interface {
+	SetOpenAIOAuthRefreshErrorIfCredentialsUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, expectedProxyID *int64, errorMsg string) (bool, error)
+}
+
 // TokenRefreshService OAuth token自动刷新服务
 // 定期检查并刷新即将过期的token
 type TokenRefreshService struct {
@@ -1012,8 +1018,29 @@ func (s *TokenRefreshService) refreshWithRetryWithRateGate(
 					}
 				}
 			} else {
-				setErr = s.accountRepo.SetError(ctx, account.ID, errorMsg)
-				persistentlyBlocked = setErr == nil
+				isOpenAIOAuth := account.IsOpenAIOAuth()
+				if isOpenAIOAuth {
+					conditionalRepo, ok := s.accountRepo.(OpenAIOAuthRefreshErrorRepository)
+					if !ok {
+						setErr = s.accountRepo.SetError(ctx, account.ID, errorMsg)
+						persistentlyBlocked = setErr == nil
+					} else {
+						persistentlyBlocked, setErr = conditionalRepo.SetOpenAIOAuthRefreshErrorIfCredentialsUnchanged(
+							ctx,
+							account.ID,
+							account.Credentials,
+							account.ProxyID,
+							errorMsg,
+						)
+						if setErr == nil && !persistentlyBlocked {
+							slog.Info("token_refresh.openai_error_status_skipped_stale_credentials", "account_id", account.ID)
+							return errRefreshSkipped
+						}
+					}
+				} else {
+					setErr = s.accountRepo.SetError(ctx, account.ID, errorMsg)
+					persistentlyBlocked = setErr == nil
+				}
 			}
 			if setErr != nil {
 				slog.Error("token_refresh.set_error_status_failed",
@@ -1456,10 +1483,11 @@ func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *
 		return
 	}
 
-	proxyURL, err := resolveConfiguredProxyURL(ctx, s.proxyRepo, account.ProxyID, account.Proxy)
-	if err != nil {
-		slog.Warn("token_refresh.privacy_proxy_failed", "account_id", account.ID, "error", err)
-		return
+	var proxyURL string
+	if account.ProxyID != nil && s.proxyRepo != nil {
+		if p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && p != nil {
+			proxyURL = p.URL()
+		}
 	}
 
 	mode := disableOpenAITraining(ctx, s.privacyClientFactory, token, proxyURL)

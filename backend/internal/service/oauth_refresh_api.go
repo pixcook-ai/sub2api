@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 // OAuthRefreshExecutor 各平台实现的 OAuth 刷新执行器
@@ -125,10 +128,12 @@ func snapshotOAuthRefreshAccount(account *Account) *Account {
 // OAuthRefreshAPI 统一的 OAuth Token 刷新入口
 // 封装分布式锁、进程内互斥锁、DB 重读、已刷新检查、竞争恢复等通用逻辑
 type OAuthRefreshAPI struct {
-	accountRepo AccountRepository
-	tokenCache  GeminiTokenCache // 可选，nil = 无分布式锁
-	lockTTL     time.Duration
-	localLocks  sync.Map // key: cacheKey string -> value: *contextMutex
+	accountRepo    AccountRepository
+	tokenCache     GeminiTokenCache // 可选，nil = 无分布式锁
+	lockTTL        time.Duration
+	localLocks     sync.Map // key: cacheKey string -> value: *contextMutex
+	openAIFailures sync.Map // account ID -> credential-scoped OpenAI rejection
+	accessVerifier atomic.Pointer[openAIAccessVerifier]
 }
 
 // NewOAuthRefreshAPI 创建统一刷新 API
@@ -253,6 +258,19 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 		}, nil
 	}
 
+	// Return the existing failure immediately so the caller can enter the
+	// same account failover loop as an upstream auth failure.
+	if failure := api.openAIRefreshFailure(freshAccount); failure != nil {
+		return &OAuthRefreshResult{Account: snapshotOAuthRefreshAccount(freshAccount)}, failure
+	}
+
+	// Verify the mandatory persistence capability before consuming a token.
+	if freshAccount.IsOpenAIOAuth() {
+		if _, ok := api.accountRepo.(OpenAIOAuthRefreshSuccessRepository); !ok {
+			return nil, openAIRefreshCASNotConfigured()
+		}
+	}
+
 	// 4. 执行平台特定刷新逻辑
 	attemptedAccount := snapshotOAuthRefreshAccount(freshAccount)
 	newCredentials, refreshErr := executor.Refresh(ctx, freshAccount)
@@ -280,6 +298,12 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 				}, nil
 			}
 		}
+		// Record permanent OpenAI OAuth rejections so the access probe can
+		// verify whether the current access token still works independently.
+		var openAIError *openai.RefreshTokenError
+		if attemptedAccount.IsOpenAIOAuth() && errors.As(refreshErr, &openAIError) && openAIError.Permanent {
+			api.recordOpenAIRefreshFailure(attemptedAccount, openAIError)
+		}
 		// Preserve the exact account snapshot used by the failed upstream call.
 		// Callers can then conditionally mutate only that credential version and
 		// avoid quarantining a concurrently reauthorized account.
@@ -292,7 +316,11 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 
 	// 5. 设置版本号 + 更新 DB
 	if newCredentials != nil {
+		newCredentials = shallowCopyMap(newCredentials)
 		newCredentials["_token_version"] = time.Now().UnixMilli()
+		if freshAccount.IsOpenAIOAuth() {
+			return api.persistOpenAIRefreshSuccess(ctx, attemptedAccount, newCredentials, executor, cacheKey)
+		}
 		if freshAccount.IsGrokOAuth() {
 			conditionalRepo, ok := api.accountRepo.(GrokOAuthRefreshSuccessRepository)
 			if !ok {

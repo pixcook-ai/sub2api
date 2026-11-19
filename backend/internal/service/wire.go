@@ -285,6 +285,10 @@ func ProvideAccountTestService(
 	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)
+	if openAIGatewayService != nil && openAIGatewayService.openAITokenProvider != nil &&
+		openAIGatewayService.openAITokenProvider.refreshAPI != nil {
+		openAIGatewayService.openAITokenProvider.refreshAPI.StartOpenAIAccessVerification(service)
+	}
 	return service
 }
 
