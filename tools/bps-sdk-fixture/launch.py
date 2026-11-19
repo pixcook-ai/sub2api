@@ -178,6 +178,7 @@ def launch(args, gateway):
     gateway_log = None
     output_inode = None
     stop = False
+    restart_requested = False
 
     def stopping(_signum, _frame):
         nonlocal stop
@@ -185,6 +186,10 @@ def launch(args, gateway):
 
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, stopping)
+    def restarting(_signum, _frame):
+        nonlocal restart_requested
+        restart_requested = True
+    signal.signal(signal.SIGUSR1, restarting)
     try:
         private_write(data_dir / ".bps-sdk-fixture.json", {"contract_version": 1, "run_id": run_id})
         if args.gateway_repo:
@@ -263,11 +268,16 @@ def launch(args, gateway):
                                     stdout=log, stderr=subprocess.STDOUT)
         if result.returncode:
             raise RuntimeError("fixture seed failed; inspect private seed.log")
-        with (data_dir / "main.log").open("w") as log:
-            os.chmod(log.name, 0o600)
-            server = subprocess.Popen([str(main_binary)], env=environment, stdout=log,
-                                      stderr=subprocess.STDOUT, start_new_session=True, cwd=backend)
+        def start_main():
+            with (data_dir / "main.log").open("a") as log:
+                os.chmod(log.name, 0o600)
+                return subprocess.Popen([str(main_binary)], env=environment, stdout=log,
+                                        stderr=subprocess.STDOUT, start_new_session=True, cwd=backend)
+        server = start_main()
         wait_until("real main HTTP health (not scheduler acceptance)", lambda: healthy(server, main_port))
+        restart_path = data_dir / "main-restart.json"
+        restart_count = 0
+        private_write(restart_path, {"restart_count": restart_count, "main_pid": server.pid})
         manifest = json.loads(seed_manifest.read_text())
         manifest.update({
             "main_tracked_dirty": main_tracked_dirty,
@@ -281,11 +291,22 @@ def launch(args, gateway):
             "gateway_binary_sha256": gateway.get("gateway_binary_sha256"),
             "container_images": {"postgres": args.postgres_image, "redis": args.redis_image},
             "launcher_pid": os.getpid(), "main_pid": server.pid,
+            "main_restart_file": str(restart_path),
             "readiness": "http-health-only; SDK scheduling must still pass",
         })
         output_inode = private_write(output, manifest)
         print(str(output), flush=True)
         while not stop:
+            if restart_requested:
+                old_pid = server.pid
+                stop_process_group(server)
+                server = start_main()
+                wait_until("restarted real main HTTP health", lambda: healthy(server, main_port))
+                restart_count += 1
+                snapshot = data_dir / "main-restart-next.json"
+                private_write(snapshot, {"restart_count": restart_count, "previous_main_pid": old_pid, "main_pid": server.pid})
+                snapshot.replace(restart_path)
+                restart_requested = False
             if server.poll() is not None:
                 raise RuntimeError("real main server stopped before fixture shutdown")
             time.sleep(0.25)

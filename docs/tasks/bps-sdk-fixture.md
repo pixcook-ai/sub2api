@@ -12,7 +12,7 @@ rtk proxy python3 tools/bps-sdk-fixture/launch.py \
   --out /private/tmp/bps-main.fixture.json
 ```
 
-进程保持前台。manifest 出现表示 HTTP 健康检查已通过，SDK 场景仍须另行运行。向启动器发送 SIGINT/SIGTERM 后停止本次 main/gateway 进程和容器，删除自己的临时文件及输出 manifest。`--keep-private-logs` 显式保留私有目录供排错，其中含合成凭据，使用者须自行清理。
+进程保持前台。manifest 出现表示 HTTP 健康检查已通过，SDK 场景仍须另行运行。向 manifest 中的 launcher_pid 发送 SIGUSR1 只重启真实 main 进程，保留同一 PG/Redis、端口和文件目录；等待 main_restart_file 中 restart_count 增加及新 main_pid 后，再做原文件 ID 的 SDK retrieve/content 和哈希比对。manifest 的 main_pid 是初次启动 PID，当前 PID 以该私有状态文件为准。向启动器发送 SIGINT/SIGTERM 后停止本次 main/gateway 进程和容器，删除自己的临时文件及输出 manifest。`--keep-private-logs` 显式保留私有目录供排错，其中含合成凭据，使用者须自行清理。
 
 ```sh
 rtk proxy python3 /absolute/path/to/bps-gateway/scripts/sdk-conformance/run.py \
