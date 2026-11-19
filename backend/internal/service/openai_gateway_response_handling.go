@@ -28,6 +28,7 @@ import (
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
 	usage            *OpenAIUsage
+	usageReported    bool
 	firstTokenMs     *int
 	firstAnswerMs    *int
 	responseID       string
@@ -165,6 +166,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 
 	usage := &OpenAIUsage{}
+	usageReported := false
+	parseUsage := func(data []byte, eventType string) {
+		if s.parseSSEUsageBytesWithType(data, eventType, usage) {
+			usageReported = true
+		}
+	}
 	imageCounter := newOpenAIImageOutputCounter()
 	responseID := ""
 	var firstOutputScanGuard atomic.Bool
@@ -362,6 +369,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
 			usage:            usage,
+			usageReported:    usageReported,
 			firstTokenMs:     firstFrame.ms,
 			firstAnswerMs:    firstAnswer.ms,
 			responseID:       responseID,
@@ -589,7 +597,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
 				// 再打 cyber 标记，否则 mark 记到的是解析前的 0，导致流式 cyber 按 0 token 计费
 				// 而漏记真实用量。对齐 WS V2 / Chat 流式路径（均先解析 usage 再 Mark）。
-				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
+				parseUsage(dataBytes, eventType)
 				if hit, code, msg := detectOpenAICyberPolicy(dataBytes); hit {
 					cyberHit = true
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
@@ -783,7 +791,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				stopFirstOutputTimer()
 			}
 			firstAnswer.observe(data, eventType, startTime)
-			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
+			parseUsage(dataBytes, eventType)
 			return
 		}
 
@@ -1312,28 +1320,55 @@ func (s *OpenAIGatewayService) parseSSEUsageBytes(data []byte, usage *OpenAIUsag
 	s.parseSSEUsageBytesWithType(data, "", usage)
 }
 
-func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType string, usage *OpenAIUsage) {
+func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType string, usage *OpenAIUsage) bool {
 	if usage == nil || len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("[DONE]")) {
-		return
+		return false
 	}
 	// Usage is absent from nearly every delta event. Avoid full JSON validation
 	// and four gjson path scans on that hot path while retaining progressive
 	// usage from compatible upstreams on any event type.
 	if !bytes.Contains(data, []byte(`"usage"`)) {
-		return
+		return false
 	}
 	parsedUsage, ok := extractOpenAIUsageFromJSONBytes(data)
 	if !ok {
-		return
+		return false
 	}
+	reported := openAIUsageHasReportedCount(data)
 	if openAIStreamEventTypeIsTerminal(effectiveOpenAISSEEventType(data, eventType)) {
 		if !openAIUsageHasTokens(&parsedUsage) && openAIUsageHasTokens(usage) {
-			return
+			return reported
 		}
 		*usage = parsedUsage
-		return
+		return reported
 	}
 	mergeOpenAIUsageNonZero(usage, parsedUsage)
+	return reported
+}
+
+// An empty usage object is accepted by legacy parsing but is not evidence of
+// reported zero consumption. Keep that distinction for partial error results.
+func openAIUsageHasReportedCount(data []byte) bool {
+	for _, path := range []string{"usage", "response.usage", "data.usage", "data.response.usage"} {
+		usage := gjson.GetBytes(data, path)
+		if !usage.IsObject() {
+			continue
+		}
+		for _, field := range []string{
+			"input_tokens", "prompt_tokens", "output_tokens", "completion_tokens",
+			"cache_creation_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cached_tokens", "prompt_cache_hit_tokens",
+			"input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens",
+			"input_tokens_details.image_tokens", "prompt_tokens_details.image_tokens",
+			"output_tokens_details.image_tokens", "completion_tokens_details.image_tokens",
+			"output_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens",
+		} {
+			count := usage.Get(field)
+			if count.Type == gjson.Number && count.Num >= 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Compatible Responses upstreams may report usage before the terminal event.

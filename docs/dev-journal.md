@@ -1,5 +1,15 @@
 # Development journal
 
+## 2026-11-20 — Responses failed-stream partial usage
+
+Issue `pixcook-ai/bps-gateway` #4, narrow main-side settlement fix. Required outbound identity convention remains absent as recorded below; current source and existing identity behavior are preserved. The real `OpenAIGatewayService.Forward` seam reproduced a terminal SSE failure carrying 9 input/4 output tokens returning a nil result, so the existing handler error-settlement path had no usage evidence.
+
+The native API-key HTTP stream path now retains a partial result only after a recognized numeric usage count has been reported and the error is not a typed account failover. Missing, null, empty, unrelated and invalid-count usage do not create a zero-consumption result; explicit numeric zero remains reported. Progressive usage and current merge rules are unchanged. Partial results reuse the full existing model, header, timing and billing metadata construction and skip successful response-account binding. Account failover, compact fallback, rates, price selection and ordinary success remain unchanged.
+
+Scope is deliberately limited to text stream failures without image output. Existing image-error handling can fall through to success scheduling and requires a separate change before partial image results are exposed. Nonstream BPS failures arrive as HTTP non-2xx with diagnostic data and require a separate trusted shape/identity contract; this patch does not parse arbitrary error bodies for billing. SDK request-ID-to-database settlement proof is pending and cannot be inferred from parser or Forward tests.
+
+Red/green: failed SSE 9/4 initially failed on nil result; unknown/explicit-zero tests then caught empty-object ambiguity before the numeric-count evidence gate. Targeted Forward tests cover failed/truncated streams, unknown versus reported zero, typed credential failover and absence of failed response bindings. Affected SSE/compact/policy tests and review results are recorded at handoff.
+
 ## 2026-11-20 — BPS policy rejection compatibility replay
 
 Issue `pixcook-ai/bps-gateway` #3 / parent #1. The required outbound identity convention is still absent, as documented in the previous entry; this patch preserves outbound identity and uses current source/tests. The actual official Python/JavaScript SDK report `/private/tmp/bps-main-policy-A-before-fix-20261120.report.json` reproduced `max_output_tokens=7` returning HTTP 200 after main removed the rejected control and forwarded twice.

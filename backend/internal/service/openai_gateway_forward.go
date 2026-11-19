@@ -1288,6 +1288,7 @@ func (s *OpenAIGatewayService) Forward(
 		imageCount := 0
 		searchCount := 0
 		var imageOutputSizes []string
+		var responseErr error
 		if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
@@ -1330,7 +1331,13 @@ func (s *OpenAIGatewayService) Forward(
 					}
 					return s.handleErrorResponse(ctx, compactResp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 				}
-				return nil, err
+				var failoverErr *UpstreamFailoverError
+				if account.Type != AccountTypeAPIKey || streamResult == nil || !streamResult.usageReported || streamResult.imageCount > 0 || errors.As(err, &failoverErr) {
+					return nil, err
+				}
+				// The attempt is terminal and cannot fail over. Preserve only usage
+				// actually reported upstream for the handler's error-settlement path.
+				responseErr = err
 			}
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
@@ -1366,7 +1373,9 @@ func (s *OpenAIGatewayService) Forward(
 			imageOutputSizes = nonStreamResult.imageOutputSizes
 			searchCount = nonStreamResult.searchCount
 		}
-		s.bindHTTPResponseAccount(ctx, c, account, responseID)
+		if responseErr == nil {
+			s.bindHTTPResponseAccount(ctx, c, account, responseID)
+		}
 
 		// Extract and save Codex usage snapshot from response headers (for OAuth accounts).
 		// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
@@ -1415,7 +1424,7 @@ func (s *OpenAIGatewayService) Forward(
 			forwardResult.SearchCount = searchCount
 		}
 		stampOpenAIResponsesUpstreamEndpoint(c, forwardResult)
-		return forwardResult, nil
+		return forwardResult, responseErr
 	}
 }
 
