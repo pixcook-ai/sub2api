@@ -623,6 +623,75 @@ func TestOpenAIGatewayService_RetriesExplicitMaxOutputTokensRejection(t *testing
 	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[1], "input.0.content.max_output_tokens").String())
 }
 
+func TestOpenAIGatewayService_PreservesMarkedPolicyRejection(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":7,"input":"hello"}`)
+	for _, code := range []string{"unsupported_parameter", "unsupported_tool", "unsupported_tool_choice", "invalid_parameter"} {
+		t.Run(code, func(t *testing.T) {
+			errorBody := fmt.Sprintf(`{"error":{"code":%q,"message":"Unsupported parameter: max_output_tokens","param":"max_output_tokens","type":"invalid_request_error"}}`, code)
+			rejection := newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, errorBody)
+			rejection.Header.Set("X-Bps-Request-Policy", "rejected-v1")
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				rejection,
+				newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1}}`),
+			}}
+			request := newOpenAIRejectedFieldTestContext(body).Request
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = request
+
+			_, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), c, newOpenAIRejectedFieldTestAccount(), body)
+
+			require.Error(t, err)
+			require.Len(t, upstream.bodies, 1, "a policy rejection must not remove controls and replay")
+			require.Equal(t, int64(7), gjson.GetBytes(upstream.bodies[0], "max_output_tokens").Int())
+			require.Equal(t, http.StatusBadRequest, c.Writer.Status())
+			require.JSONEq(t, errorBody, recorder.Body.String())
+		})
+	}
+}
+
+func TestOpenAIGatewayService_IgnoresUntrustedPolicyMarkers(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":7,"input":"hello"}`)
+	errorBody := `{"error":{"code":"unsupported_parameter","message":"Unsupported parameter: max_output_tokens","param":"max_output_tokens","type":"invalid_request_error"}}`
+	for _, test := range []struct {
+		name    string
+		markers []string
+		error   string
+	}{
+		{"client marker only", nil, errorBody},
+		{"wrong version", []string{"rejected-v2"}, errorBody},
+		{"wrong case", []string{"Rejected-v1"}, errorBody},
+		{"extra value", []string{"rejected-v1", "other"}, errorBody},
+		{"wrong type", []string{"rejected-v1"}, strings.Replace(errorBody, `"invalid_request_error"`, `"upstream_error"`, 1)},
+		{"numeric type", []string{"rejected-v1"}, strings.Replace(errorBody, `"type":"invalid_request_error"`, `"type":7`, 1)},
+		{"unknown code", []string{"rejected-v1"}, strings.Replace(errorBody, `"unsupported_parameter"`, `"unknown_parameter"`, 1)},
+		{"numeric code", []string{"rejected-v1"}, strings.Replace(errorBody, `"code":"unsupported_parameter"`, `"code":7`, 1)},
+		{"empty param", []string{"rejected-v1"}, strings.Replace(errorBody, `"param":"max_output_tokens"`, `"param":""`, 1)},
+		{"null param", []string{"rejected-v1"}, strings.Replace(errorBody, `"param":"max_output_tokens"`, `"param":null`, 1)},
+		{"invalid JSON", []string{"rejected-v1"}, errorBody + " trailing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rejection := newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, test.error)
+			for _, marker := range test.markers {
+				rejection.Header.Add("X-Bps-Request-Policy", marker)
+			}
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				rejection,
+				newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1}}`),
+			}}
+			c := newOpenAIRejectedFieldTestContext(body)
+			c.Request.Header.Set("X-Bps-Request-Policy", "rejected-v1")
+
+			result, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), c, newOpenAIRejectedFieldTestAccount(), body)
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Len(t, upstream.bodies, 2, "unrecognized upstream markers preserve existing retry behavior")
+			require.False(t, gjson.GetBytes(upstream.bodies[1], "max_output_tokens").Exists())
+		})
+	}
+}
+
 func TestOpenAIGatewayService_ComposesProactiveNamespaceStripWithRejectedFieldRetry(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":2048,"input":[{"type":"function_call","name":"first","namespace":"remove-first","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove-second","input":"{}"}]}`)
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
