@@ -106,7 +106,7 @@ func run(args []string, out io.Writer) error {
 		KeyFile    string `json:"api_key_file"`
 		Commit     string `json:"gateway_commit"`
 	}
-	data, err := os.ReadFile(*gatewayPath)
+	data, err := privateFile(*gatewayPath)
 	if err != nil {
 		return err
 	}
@@ -126,6 +126,9 @@ func run(args []string, out io.Writer) error {
 	}
 	if len(strings.TrimSpace(string(key))) == 0 {
 		return errors.New("empty gateway key")
+	}
+	if _, err := privateFile(filepath.Join(*dir, "config.yaml")); err != nil {
+		return fmt.Errorf("fixture config: %w", err)
 	}
 	cfg, err := config.LoadForBootstrap()
 	if err != nil {

@@ -42,7 +42,7 @@ def private_file(value, field):
 
 
 def gateway_inputs(manifest_path):
-    value = json.loads(Path(manifest_path).read_text())
+    value = json.loads(private_file(manifest_path, "gateway_manifest").read_text())
     if value.get("contract_version") != 1 or value.get("source") != "local":
         raise ValueError("gateway manifest must be a version 1 local fixture")
     if value.get("seam") != "gateway-diagnostic":
@@ -116,6 +116,52 @@ def healthy(server, port):
         return False
 
 
+def stop_process_group(process):
+    if process is None:
+        return
+    # A group can outlive its leader; always signal the owned process group.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        pass
+    # The leader exiting does not prove its children exited. Reap stragglers.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait(timeout=5)
+
+
+def source_state(repository):
+    return {
+        "commit": command("git", "rev-parse", "HEAD", cwd=repository),
+        "tracked_dirty": bool(command("git", "status", "--porcelain", "--untracked-files=no", cwd=repository)),
+        "source_dirty": bool(command("git", "status", "--porcelain", "--untracked-files=all", cwd=repository)),
+    }
+
+
+def binary_digest(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def build_gateway_fixture(repository, data_dir):
+    module = repository / "bps-local"
+    binary = data_dir / "gateway-fixture"
+    with tempfile.TemporaryDirectory(prefix="sdk-fixture-", dir=module) as source_dir:
+        source = Path(source_dir) / "main.go"
+        shutil.copyfile(repository / "scripts/sdk-conformance/gateway_fixture.go.txt", source)
+        command("go", "build", "-mod=vendor", "-o", binary, source, cwd=module)
+    return binary
+
+
 def launch(args, gateway):
     repository = Path(args.main_repo).resolve(strict=True)
     if not (repository / "backend/cmd/server/main.go").is_file():
@@ -149,15 +195,20 @@ def launch(args, gateway):
             gateway_manifest = data_dir / "gateway.json"
             gateway_log = (data_dir / "gateway.log").open("w")
             os.chmod(gateway_log.name, 0o600)
-            gateway_process = subprocess.Popen([sys.executable, str(fixture_script), "--out", str(gateway_manifest)], stdout=gateway_log, stderr=subprocess.STDOUT, start_new_session=True, env=process_environment(data_dir))
+            gateway_source = source_state(gateway_repository)
+            gateway_binary = build_gateway_fixture(gateway_repository, data_dir)
+            gateway_process = subprocess.Popen([sys.executable, str(fixture_script), "--binary", str(gateway_binary), "--out", str(gateway_manifest)], stdout=gateway_log, stderr=subprocess.STDOUT, start_new_session=True, env=process_environment(data_dir))
             def gateway_ready():
                 if gateway_process.poll() is not None:
                     raise RuntimeError("owned gateway fixture exited; inspect private gateway.log")
                 return gateway_manifest.exists()
             wait_until("owned gateway fixture", gateway_ready)
             gateway = gateway_inputs(gateway_manifest)
-            gateway["gateway_commit"] = command("git", "rev-parse", "HEAD", cwd=gateway_repository)
-            gateway["gateway_tracked_dirty"] = bool(command("git", "status", "--porcelain", "--untracked-files=no", cwd=gateway_repository))
+            gateway_after_build = source_state(gateway_repository)
+            gateway["gateway_commit"] = gateway_source["commit"]
+            gateway["gateway_tracked_dirty"] = gateway_source["tracked_dirty"] or gateway_after_build["tracked_dirty"]
+            gateway["gateway_source_clean"] = not gateway_source["source_dirty"] and gateway_after_build == gateway_source
+            gateway["gateway_binary_sha256"] = binary_digest(gateway_binary)
             # Replace only our private diagnostic manifest, before the seed reads it.
             gateway_manifest.write_text(json.dumps(gateway))
             args.gateway_manifest = str(gateway_manifest)
@@ -191,8 +242,9 @@ def launch(args, gateway):
         # JSON is valid YAML, so no additional configuration serializer is needed.
         private_write(data_dir / "config.yaml", configuration)
         environment = process_environment(data_dir)
-        commit = command("git", "rev-parse", "HEAD", cwd=repository)
-        main_tracked_dirty = bool(command("git", "status", "--porcelain", "--untracked-files=no", cwd=repository))
+        main_source = source_state(repository)
+        commit = main_source["commit"]
+        main_tracked_dirty = main_source["tracked_dirty"]
         main_binary = Path(args.main_binary).resolve(strict=True) if args.main_binary else data_dir / "sub2api"
         seed_binary = Path(args.seed_binary).resolve(strict=True) if args.seed_binary else data_dir / "sdk-fixture-seed"
         backend = repository / "backend"
@@ -200,6 +252,7 @@ def launch(args, gateway):
             command("go", "build", "-o", seed_binary, "./cmd/sdk-fixture-seed", cwd=backend)
         if not args.main_binary:
             command("go", "build", "-ldflags", f"-X main.Commit={commit}", "-o", main_binary, "./cmd/server", cwd=backend)
+        main_after_build = source_state(repository)
         seed_manifest = data_dir / "seed.json"
         with (data_dir / "seed.log").open("w") as log:
             os.chmod(log.name, 0o600)
@@ -219,10 +272,13 @@ def launch(args, gateway):
         manifest.update({
             "main_tracked_dirty": main_tracked_dirty,
             "gateway_tracked_dirty": gateway.get("gateway_tracked_dirty"),
-            "source_provenance_verified": not (args.main_binary or args.seed_binary) and bool(args.gateway_repo),
+            "main_source_clean": not main_source["source_dirty"] and main_after_build == main_source,
+            "gateway_source_clean": gateway.get("gateway_source_clean", False),
+            "source_provenance_verified": not (args.main_binary or args.seed_binary) and bool(args.gateway_repo) and not main_source["source_dirty"] and main_after_build == main_source and gateway.get("gateway_source_clean") is True,
             "binary_source": "prebuilt-diagnostic" if args.main_binary or args.seed_binary else "launcher-built",
-            "main_binary_sha256": hashlib.sha256(main_binary.read_bytes()).hexdigest(),
-            "seed_binary_sha256": hashlib.sha256(seed_binary.read_bytes()).hexdigest(),
+            "main_binary_sha256": binary_digest(main_binary),
+            "seed_binary_sha256": binary_digest(seed_binary),
+            "gateway_binary_sha256": gateway.get("gateway_binary_sha256"),
             "container_images": {"postgres": args.postgres_image, "redis": args.redis_image},
             "launcher_pid": os.getpid(), "main_pid": server.pid,
             "readiness": "http-health-only; SDK scheduling must still pass",
@@ -234,32 +290,34 @@ def launch(args, gateway):
                 raise RuntimeError("real main server stopped before fixture shutdown")
             time.sleep(0.25)
     finally:
-        if server and server.poll() is None:
-            os.killpg(server.pid, signal.SIGTERM)
+        cleanup_errors = []
+        def cleanup(label, action):
             try:
-                server.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                os.killpg(server.pid, signal.SIGKILL)
-                server.wait()
+                action()
+            except Exception as error:
+                cleanup_errors.append(f"{label}: {type(error).__name__}")
+        cleanup("main process", lambda: stop_process_group(server))
         for container in reversed(containers):
-            subprocess.run(["rtk", "proxy", "docker", "rm", "-f", container],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if gateway_process and gateway_process.poll() is None:
-            os.killpg(gateway_process.pid, signal.SIGTERM)
-            try:
-                gateway_process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                os.killpg(gateway_process.pid, signal.SIGKILL)
-                gateway_process.wait()
+            cleanup("container", lambda container=container: subprocess.run(["rtk", "proxy", "docker", "rm", "-f", container],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True))
+        cleanup("gateway process", lambda: stop_process_group(gateway_process))
         if gateway_log:
-            gateway_log.close()
-        if output_inode is not None and output.exists() and output.lstat().st_ino == output_inode:
-            output.unlink()
+            cleanup("gateway log", gateway_log.close)
+        def remove_owned_output():
+            try:
+                info = output.lstat()
+            except FileNotFoundError:
+                return
+            if output_inode is not None and info.st_ino == output_inode:
+                output.unlink()
+        cleanup("output manifest", remove_owned_output)
         if args.keep_private_logs:
             # Synthetic fixture credentials remain here; caller explicitly owns cleanup.
             print(f"private fixture logs retained: {data_dir}", file=sys.stderr)
         else:
-            shutil.rmtree(data_dir)
+            cleanup("private directory", lambda: shutil.rmtree(data_dir))
+        if cleanup_errors:
+            print("fixture cleanup incomplete: " + "; ".join(cleanup_errors), file=sys.stderr)
 
 
 def main():
