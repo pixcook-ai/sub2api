@@ -29,6 +29,7 @@ func RegisterGatewayRoutes(
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
 ) {
+	RegisterFileRoutes(r, h.Files, apiKeyAuth)
 	bodyMemoryBudget := pkghttputil.NewBodyMemoryBudget(cfg.Gateway.RequestBodyMemoryBudgetBytes)
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize, bodyMemoryBudget)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize, bodyMemoryBudget)

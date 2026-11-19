@@ -1,0 +1,11 @@
+# Development journal
+
+## 2026-11-20 — BPS compatibility 06: durable main Files
+
+The worktree AGENTS.md requires `docs/conventions/codex-outbound-identity.md`, latest `docs/dev-journal.md`, and `docs/tasks/` before implementation. These paths do not exist in this checkout or its owning main checkout. Exact-name search under the current project found no convention source; `git ls-files` and `git log --all -- docs/conventions/codex-outbound-identity.md docs/dev-journal.md docs/tasks` returned no entries. The coordinating agent explicitly authorized documenting the missing prerequisites and proceeding from current source/tests without reconstructing unknown conventions. Files work retains current outbound Codex identity behavior and adds only a separate authenticated storage boundary.
+
+Issue: pixcook-ai/bps-gateway#5, plan 06, specification #1. Red/green acceptance uses actual authenticated main HTTP, migrated PostgreSQL, and private filesystem storage. SDK acceptance remains a separate gate owned by issue #2.
+
+Implemented a separate no-model Files route, user/current-group authorization, private persistent streaming storage and PostgreSQL budget/upload/read leases. Upload expiry is checked before SimpleMode and billing bypass; no existing outbound identity fields were changed. Full main wiring was regenerated using `go run github.com/google/wire/cmd/wire@v0.7.0 ./cmd/server` (tool-specific missing sums were avoided without changing project dependencies).
+
+Initial real HTTP red was 403 for a zero-balance owner. The Files policy green retains exact key/user/IP/group/expiry checks while skipping inference billing. Real PG/HTTP acceptance now has 21 passing tests/subtests, including restart/hash/key rotation, actual active-status ExpiresAt, SimpleMode, revoked identities, streaming limits/purpose order, client cancellation, actual PG trigger write failures and rename-before-DB-commit staging recovery. Repository read-lease invalid renewal and mutation-lock competition both had red evidence before fixes. Middleware/routes/server unit packages: 653 passed. Private store explicit-file race: 24 passed; actual finite-volume and final combined validation still pending at this entry.

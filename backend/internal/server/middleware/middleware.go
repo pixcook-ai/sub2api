@@ -76,6 +76,21 @@ func NewErrorResponse(code, message string) ErrorResponse {
 
 // AbortWithError 中断请求并返回JSON错误
 func AbortWithError(c *gin.Context, statusCode int, code, message string) {
+	if c.Request != nil && isFileManagementRequest(c.Request.Method, c.Request.URL.Path) {
+		kind := "invalid_request_error"
+		switch {
+		case statusCode == http.StatusUnauthorized:
+			kind = "authentication_error"
+		case statusCode == http.StatusForbidden:
+			kind = "permission_error"
+		case statusCode == http.StatusTooManyRequests:
+			kind = "rate_limit_error"
+		case statusCode >= http.StatusInternalServerError:
+			kind = "server_error"
+		}
+		c.AbortWithStatusJSON(statusCode, gin.H{"error": gin.H{"message": message, "type": kind, "param": nil, "code": code}})
+		return
+	}
 	c.JSON(statusCode, NewErrorResponse(code, message))
 	c.Abort()
 }

@@ -174,10 +174,17 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		ctx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
 		c.Request = c.Request.WithContext(ctx)
 		billingInfoRequest := c.Request.URL.Path == "/v1/sub2api/billing"
+		filesRequest := isFileManagementRequest(c.Request.Method, c.Request.URL.Path)
+		// Files management is unbilled, but an expired credential is never a
+		// valid identity. Enforce time even in SimpleMode and when status is active.
+		if filesRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
+			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key has expired")
+			return
+		}
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
 		// generation consumes the key's remaining balance.
-		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
+		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || filesRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
 
 		// ── 4. SimpleMode → early return ─────────────────────────────
 
@@ -202,7 +209,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 
 		// 倍率自省不需要订阅数据；/v1/usage 仍保留原有订阅读取行为。
-		if isSubscriptionType && subscriptionService != nil && !billingInfoRequest {
+		if isSubscriptionType && subscriptionService != nil && !billingInfoRequest && !filesRequest {
 			sub, subErr := subscriptionService.GetActiveSubscription(
 				c.Request.Context(),
 				apiKey.User.ID,
@@ -329,6 +336,7 @@ func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 
 	path := strings.TrimRight(c.Request.URL.Path, "/")
 	for _, root := range []string{
+		"/v1/files",
 		"/v1/responses",
 		"/openai/v1/responses",
 		"/responses",
@@ -339,6 +347,17 @@ func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 		}
 	}
 	return false
+}
+
+func isFileManagementRequest(method, path string) bool {
+	if method == http.MethodPost {
+		return path == "/v1/files"
+	}
+	if method != http.MethodGet || !strings.HasPrefix(path, "/v1/files/") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "/v1/files/"), "/")
+	return parts[0] != "" && (len(parts) == 1 || (len(parts) == 2 && parts[1] == "content"))
 }
 
 func isAsyncImageTaskRead(method, path string) bool {
