@@ -27,7 +27,7 @@ rtk proxy python3 /absolute/path/to/bps-gateway/scripts/sdk-conformance/run.py \
 
 启动器只接受 HTTP literal loopback gateway/metrics 地址、显式端口和私有普通 manifest/key 文件。seed 在连接数据库前要求私有 marker、DATA_DIR/CONFIG_FILE 一致、standard mode、loopback DB/Redis/server，以及精确的随机数据库名；数据库存在用户、账号或 key 即拒绝 seed。
 
-默认正例池有同用户两把 key 及另一用户 key，用于所有权隔离。Python/JavaScript 的 429 不重试、默认重试和截断各有独立 Group/key/Account 池，保持主仓真实 cooldown 保护。一次完整负例后应重建 fixture 再重复验收，以免上轮 cooldown 污染结果。
+默认正例池有同用户两把 key 及另一用户 key，用于所有权隔离。Python/JavaScript 的 429 不重试、默认重试、policy-rejections、policy-catalog、tool-strict-default，以及 04 的 failed-usage、truncated、incomplete、annotations 各 stream/JSON 场景均有独立 Group/key/Account 池（默认正例池加 26 个 SDK 场景池），保持主仓真实 cooldown 保护；policy-catalog 的八个步骤仍在同一场景池/会话中，不能拆分。manifest resources 同时记录 scenario_groups/scenario_accounts，供真实 PG 关联核验。一次完整负例后应重建 fixture 再重复验收，以免上轮 cooldown 污染结果。
 
 Files 在同一主仓 base_url 使用真实鉴权和落盘服务，配置仅在本 fixture 打开。本地大文件管理按下述独立 gate 验证；工具不声明列表、删除、搜索、BPS 原生文档和真实产物已通过；按各自任务的独立成功门验收。真实 BPS 不参与本地组合测试。
 
