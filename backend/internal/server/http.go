@@ -113,6 +113,7 @@ func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {
 // ProvideHTTPServer 提供 HTTP 服务器
 func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 	httpHandler := http.Handler(router)
+	filesRouter := httpHandler
 	server := &http.Server{
 		Addr:           cfg.Server.Address(),
 		Handler:        httpHandler,
@@ -132,6 +133,19 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 	if globalMaxSize > 0 {
 		httpHandler = http.MaxBytesHandler(httpHandler, globalMaxSize)
 		log.Printf("Global max request body size: %d bytes (%.2f MB)", globalMaxSize, float64(globalMaxSize)/(1<<20))
+	}
+	if cfg.Gateway.Files.Enabled {
+		// Multipart Files have their own finite cap. Keep all other ingress,
+		// including JSON inference requests, behind the existing global cap.
+		regularHandler := httpHandler
+		filesHandler := http.MaxBytesHandler(filesRouter, cfg.Gateway.Files.MaxFileBytes+64*1024)
+		httpHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && r.URL.Path == "/v1/files" {
+				filesHandler.ServeHTTP(w, r)
+				return
+			}
+			regularHandler.ServeHTTP(w, r)
+		})
 	}
 
 	// 根据配置决定是否启用 H2C
