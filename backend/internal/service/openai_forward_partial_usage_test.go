@@ -98,3 +98,15 @@ func TestOpenAIForwardFailoverStreamDoesNotPublishPartialSettlement(t *testing.T
 	require.Nil(t, result)
 	require.Len(t, upstream.bodies, 1)
 }
+
+func TestOpenAIForwardFailedStreamDoesNotBorrowUsageEvidenceFromAnotherObject(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`)
+	response := newOpenAIRejectedFieldTestResponse(http.StatusOK,
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"+
+			"data: {\"type\":\"response.failed\",\"usage\":{},\"response\":{\"error\":{\"code\":\"upstream_error\",\"message\":\"generation failed\"},\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}}\n\n")
+	response.Header.Set("Content-Type", "text/event-stream")
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{response}}
+	result, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), newOpenAIRejectedFieldTestContext(body), newOpenAIRejectedFieldTestAccount(), body)
+	require.Error(t, err)
+	require.Nil(t, result, "the parser selected the empty top-level object, so nested counts cannot validate fabricated zero")
+}

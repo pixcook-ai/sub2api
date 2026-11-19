@@ -8,7 +8,7 @@ The native API-key HTTP stream path now retains a partial result only after a re
 
 Scope is deliberately limited to text stream failures without image output. Existing image-error handling can fall through to success scheduling and requires a separate change before partial image results are exposed. Nonstream BPS failures arrive as HTTP non-2xx with diagnostic data and require a separate trusted shape/identity contract; this patch does not parse arbitrary error bodies for billing. SDK request-ID-to-database settlement proof is pending and cannot be inferred from parser or Forward tests.
 
-Red/green: failed SSE 9/4 initially failed on nil result; unknown/explicit-zero tests then caught empty-object ambiguity before the numeric-count evidence gate. Targeted Forward tests cover failed/truncated streams, unknown versus reported zero, typed credential failover and absence of failed response bindings. Affected SSE/compact/policy tests and review results are recorded at handoff.
+Red/green: failed SSE 9/4 initially failed on nil result; unknown/explicit-zero tests then caught empty-object ambiguity before the numeric-count evidence gate. Targeted Forward tests cover failed/truncated streams, unknown versus reported zero, typed credential failover and absence of failed response bindings. Affected SSE/compact/policy tests: 121 passed with the unit tag. Both review axes identified a P2 mismatch between the legacy first-object extractor and a later-object evidence scan; the mixed-location regression reproduced a fabricated zero result, and evidence now comes from the exact same selected usage object. Final narrow review is recorded at handoff.
 
 ## 2026-11-20 — BPS policy rejection compatibility replay
 

@@ -1330,11 +1330,10 @@ func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType
 	if !bytes.Contains(data, []byte(`"usage"`)) {
 		return false
 	}
-	parsedUsage, ok := extractOpenAIUsageFromJSONBytes(data)
+	parsedUsage, ok, reported := extractOpenAIUsageFromJSONBytesWithReport(data)
 	if !ok {
 		return false
 	}
-	reported := openAIUsageHasReportedCount(data)
 	if openAIStreamEventTypeIsTerminal(effectiveOpenAISSEEventType(data, eventType)) {
 		if !openAIUsageHasTokens(&parsedUsage) && openAIUsageHasTokens(usage) {
 			return reported
@@ -1348,24 +1347,18 @@ func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType
 
 // An empty usage object is accepted by legacy parsing but is not evidence of
 // reported zero consumption. Keep that distinction for partial error results.
-func openAIUsageHasReportedCount(data []byte) bool {
-	for _, path := range []string{"usage", "response.usage", "data.usage", "data.response.usage"} {
-		usage := gjson.GetBytes(data, path)
-		if !usage.IsObject() {
-			continue
-		}
-		for _, field := range []string{
-			"input_tokens", "prompt_tokens", "output_tokens", "completion_tokens",
-			"cache_creation_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cached_tokens", "prompt_cache_hit_tokens",
-			"input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens",
-			"input_tokens_details.image_tokens", "prompt_tokens_details.image_tokens",
-			"output_tokens_details.image_tokens", "completion_tokens_details.image_tokens",
-			"output_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens",
-		} {
-			count := usage.Get(field)
-			if count.Type == gjson.Number && count.Num >= 0 {
-				return true
-			}
+func openAIUsageHasReportedCount(usage gjson.Result) bool {
+	for _, field := range []string{
+		"input_tokens", "prompt_tokens", "output_tokens", "completion_tokens",
+		"cache_creation_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cached_tokens", "prompt_cache_hit_tokens",
+		"input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens",
+		"input_tokens_details.image_tokens", "prompt_tokens_details.image_tokens",
+		"output_tokens_details.image_tokens", "completion_tokens_details.image_tokens",
+		"output_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens",
+	} {
+		count := usage.Get(field)
+		if count.Type == gjson.Number && count.Num >= 0 {
+			return true
 		}
 	}
 	return false
@@ -1475,8 +1468,13 @@ func logOpenAISuccessMissingUsage(ctx context.Context, c *gin.Context, account *
 }
 
 func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
+	usage, ok, _ := extractOpenAIUsageFromJSONBytesWithReport(body)
+	return usage, ok
+}
+
+func extractOpenAIUsageFromJSONBytesWithReport(body []byte) (OpenAIUsage, bool, bool) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return OpenAIUsage{}, false
+		return OpenAIUsage{}, false, false
 	}
 	// 部分 OpenAI 兼容上游（例如 Cline API）会将标准响应包在 data 字段中：
 	// {"data":{"choices": [...], "usage": {...}}, "success":true}。
@@ -1492,12 +1490,13 @@ func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 		{usagePath: "data.response.usage", imageUsagePath: "data.response.tool_usage.image_gen"},
 	}
 	for _, candidate := range candidates {
-		if usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, candidate.usagePath)); ok {
+		usageObject := gjson.GetBytes(body, candidate.usagePath)
+		if usage, ok := openAIUsageFromGJSON(usageObject); ok {
 			mergeHostedImageGenToolUsage(gjson.GetBytes(body, candidate.imageUsagePath), &usage)
-			return usage, true
+			return usage, true, openAIUsageHasReportedCount(usageObject)
 		}
 	}
-	return OpenAIUsage{}, false
+	return OpenAIUsage{}, false, false
 }
 
 // openAIResponsesCompletedEventIsEmpty reports whether a response.completed /
