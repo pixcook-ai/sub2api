@@ -41,9 +41,9 @@ Files 在同一主仓 base_url 使用真实鉴权和落盘服务，配置仅在�
 2026-11-20，实际 source main `8d67fa0adfe261c6f6634e894007dd6d1729d176`（包含 Files `7b6e84c`），gateway `3b022a742c42eb76ae24f006835262912bf28541`，三产物自建且两 checkout 无 tracked/untracked 修改，`source_provenance_verified=true`。
 
 - 官方 Python `3.55.1` / JavaScript `7.60.0` 的 Files 创建、元数据读取、内容下载均通过。报告整体 `incomplete` 是因为这一轮没有跑 18 个推理基线；该结果不改变 Files 独立 gate。
-- Python 以 rb 文件句柄上传 **34,603,008 字节（33 MiB）**，发送 SIGUSR1 后旧 main PID `52556` 确实退出，新 PID `67851` 健康启动；保留同一数据库和文件目录。
-- 重建 SDK client 后，以同一 ID `file-bd76b989811de656ff8c9815332759bc` 读取并流式下载。字节数与 SHA256 `59d8b2aea4b5a749b078f93edbc00cb8fae0a7d85bc232ed5848dbea509905c7` 一致；restart_count 从 0 增为 1。
+- Python 以 rb 文件句柄上传 **34,603,008 字节（33 MiB）**，发送 SIGUSR1 后最终带脚本来源哈希的复验中，旧 main PID `67851` 确实退出，新 PID `74881` 健康启动；保留同一数据库和文件目录。
+- 重建 SDK client 后，以同一 ID `file-d5c530531e417556ad3f9649ad1f3e28` 读取并流式下载。字节数与 SHA256 `59d8b2aea4b5a749b078f93edbc00cb8fae0a7d85bc232ed5848dbea509905c7` 一致；restart_count 从 1 增为 2。
 - 全部 Files 场景的 BPS HTTP attempts、accepted generations、uploads 都是 0；这验证主仓文件管理，不证明 BPS 阅读能力。
 - main binary SHA256：`a4f36e69cab0b21d93d789b8f2c1c41056082be035e47c63bd5b5a5488f18bb8`；seed：`399d04e7b24d4c9d8e920dac57e65d0bb0980fb349c7a3c5b13ceba2aaeffe57`；gateway fixture：`c56409ae109dbcb6487d165ae20c745354d7db026269c2bbb98dd6e0f8002298`。
 
-脱敏报告：`/private/tmp/bps-main-files-source-sdk-20261120.report.json`、`/private/tmp/bps-main-files-large-restart-20261120.report.json`。客户端临时 33 MiB 文件已删除。服务端 fixture 暂为后续请求政策/SSE 验收保留；本票 #2 的完整 lifecycle 清理仍须实际退出后另记，不能从该 Files gate 推断已完成。上线持久卷、200 MiB 实际端到端和真实 BPS 文档理解未在本轮验证。
+最终复验 runner_source_sha256 为 `7319cef42ccc03a03f832a8288a58604abcf3ee2fec4f2d86fb001cf93f0987b`。持久脱敏报告位于附件仓 `pixcook-ai/bps-gateway` commit `0dc4a2c` 的 `scripts/sdk-conformance/evidence/files-large-restart-source-20261120.json` 与 `files-sdk-source-20261120.json`；本机报告：`/private/tmp/bps-main-files-source-sdk-20261120.report.json`、`/private/tmp/bps-main-files-large-restart-20261120.report.json`。客户端临时 33 MiB 文件已删除。服务端 fixture 暂为后续请求政策/SSE 验收保留；本票 #2 的完整 lifecycle 清理仍须实际退出后另记，不能从该 Files gate 推断已完成。上线持久卷、200 MiB 实际端到端和真实 BPS 文档理解未在本轮验证。
