@@ -21,6 +21,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	httpserver "github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -50,16 +51,26 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 	key, rotated, foreign := makeKey(user.ID, "first"), makeKey(user.ID, "rotated"), makeKey(other.ID, "foreign")
 	fc := config.DefaultFilesConfig()
 	fc.Enabled, fc.Root, fc.FreeSpaceReserveBytes = true, t.TempDir(), 1
-	cfg := &config.Config{Gateway: config.GatewayConfig{Files: fc}}
+	cfg := &config.Config{Server: config.ServerConfig{MaxRequestBodySize: 1024}, Gateway: config.GatewayConfig{Files: fc}}
 	newServer := func() *httptest.Server {
+		cfg.Gateway.Files = fc
 		store, err := service.NewPrivateFileBlobStore(fc.Root, fc.FreeSpaceReserveBytes)
 		require.NoError(t, err)
 		files, err := service.NewFileService(NewFileRepository(integrationDB), store, fc)
 		require.NoError(t, err)
-		auth := middleware.NewAPIKeyAuthMiddleware(service.NewAPIKeyService(keyRepo, nil, nil, nil, nil, nil, cfg), nil, cfg)
+		subscriptions := service.NewSubscriptionService(nil, NewUserSubscriptionRepository(client), nil, client, cfg)
+		auth := middleware.NewAPIKeyAuthMiddleware(service.NewAPIKeyService(keyRepo, nil, nil, nil, nil, nil, cfg), subscriptions, cfg)
 		r := gin.New()
 		routes.RegisterFileRoutes(r, handler.NewFileHandler(files), auth)
-		return httptest.NewServer(r)
+		r.POST("/json-limit", func(c *gin.Context) {
+			_, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				c.Status(http.StatusRequestEntityTooLarge)
+				return
+			}
+			c.Status(http.StatusOK)
+		})
+		return httptest.NewServer(httpserver.ProvideHTTPServer(cfg, r).Handler)
 	}
 	request := func(s *httptest.Server, method, path, credential, contentType string, body io.Reader) *http.Response {
 		t.Helper()
@@ -115,6 +126,21 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 	}
 	resp = request(s, http.MethodGet, "/v1/files/"+file.ID, foreign.Key, "", nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	t.Run("feature off rollback preserves durable resources", func(t *testing.T) {
+		fc.Enabled = false
+		disabled := newServer()
+		resp := request(disabled, http.MethodGet, "/v1/files/"+file.ID, key.Key, "", nil)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		disabled.Close()
+		fc.Enabled = true
+		reenabled := newServer()
+		defer reenabled.Close()
+		resp = request(reenabled, http.MethodGet, "/v1/files/"+file.ID+"/content", rotated.Key, "", nil)
+		got, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, payload, got, "rollback must preserve ID, durable record and original bytes")
+	})
 
 	t.Run("current authentication policy", func(t *testing.T) {
 		for _, mode := range []string{"", config.RunModeSimple} {
@@ -187,6 +213,7 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 			want                    int
 		}{
 			{"purpose after file", "after.txt", "user_data", true, []byte("after"), 200 << 20, 200},
+			{"file above global JSON limit", "independent.txt", "user_data", false, bytes.Repeat([]byte("x"), 4096), 200 << 20, 200},
 			{"unsafe filename", "../escape.txt", "user_data", false, []byte("x"), 200 << 20, 400},
 			{"unsupported purpose", "purpose.txt", "unknown-purpose", false, []byte("x"), 200 << 20, 400},
 			{"empty file", "empty.txt", "user_data", false, nil, 200 << 20, 400},
@@ -208,6 +235,8 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 				require.Empty(t, entries, "rejected uploads must leave no staging bytes")
 			})
 		}
+		resp := request(s, http.MethodPost, "/json-limit", key.Key, "application/json", bytes.NewReader(bytes.Repeat([]byte("x"), 4096)))
+		require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, "Files must not increase the existing JSON body limit")
 	})
 	t.Run("actual database failure cleans private bytes", func(t *testing.T) {
 		_, err := integrationDB.ExecContext(ctx, `CREATE FUNCTION files_http_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
@@ -311,5 +340,39 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 		require.Equal(t, "deleted", state)
 		_, err = repo.GetForOwner(ctx, user.ID, group.ID, record.PublicID)
 		require.ErrorIs(t, err, service.ErrFileNotFound)
+	})
+	t.Run("subscription entitlement remains current", func(t *testing.T) {
+		_, err := client.Group.UpdateOneID(group.ID).SetSubscriptionType(service.SubscriptionTypeSubscription).SetDailyLimitUsd(1).Save(ctx)
+		require.NoError(t, err)
+		defer func() {
+			_, err := client.Group.UpdateOneID(group.ID).SetSubscriptionType(service.SubscriptionTypeStandard).Save(ctx)
+			require.NoError(t, err)
+		}()
+		check := func(want int) {
+			t.Helper()
+			for _, mode := range []string{"", config.RunModeSimple} {
+				cfg.RunMode = mode
+				server := newServer()
+				resp := request(server, http.MethodGet, "/v1/files/"+file.ID, key.Key, "", nil)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.Equal(t, want, resp.StatusCode, string(body))
+				upload, kind := makeUpload("subscription.txt", "user_data", []byte("member data"), false)
+				resp = request(server, http.MethodPost, "/v1/files", key.Key, kind, upload)
+				require.Equal(t, want, resp.StatusCode)
+				server.Close()
+			}
+			cfg.RunMode = ""
+		}
+		check(http.StatusForbidden)
+		sub, err := client.UserSubscription.Create().SetUserID(user.ID).SetGroupID(group.ID).SetStartsAt(time.Now().Add(-time.Hour)).SetExpiresAt(time.Now().Add(time.Hour)).SetStatus(service.SubscriptionStatusActive).SetDailyUsageUsd(10).Save(ctx)
+		require.NoError(t, err)
+		check(http.StatusOK) // Exhausted inference budget must not deny storage management.
+		_, err = client.UserSubscription.UpdateOneID(sub.ID).SetStatus(service.SubscriptionStatusExpired).Save(ctx)
+		require.NoError(t, err)
+		check(http.StatusForbidden)
+		_, err = client.UserSubscription.UpdateOneID(sub.ID).SetStatus(service.SubscriptionStatusActive).SetExpiresAt(time.Now().Add(-time.Hour)).Save(ctx)
+		require.NoError(t, err)
+		check(http.StatusForbidden)
 	})
 }

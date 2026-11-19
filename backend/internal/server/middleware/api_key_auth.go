@@ -181,6 +181,20 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key has expired")
 			return
 		}
+		// Subscription membership grants access to subscription groups. Keep
+		// that authorization separate from inference spending/window limits,
+		// including in SimpleMode; exhausted budgets alone do not revoke it.
+		if filesRequest && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
+			if subscriptionService == nil {
+				AbortWithError(c, http.StatusServiceUnavailable, "SUBSCRIPTION_AUTH_UNAVAILABLE", "Group authorization is temporarily unavailable")
+				return
+			}
+			sub, err := subscriptionService.GetActiveSubscription(c.Request.Context(), apiKey.User.ID, apiKey.Group.ID)
+			if err != nil || sub == nil || !sub.IsActive() {
+				AbortWithError(c, http.StatusForbidden, "SUBSCRIPTION_NOT_FOUND", "No active subscription authorizes this group")
+				return
+			}
+		}
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
 		// generation consumes the key's remaining balance.
