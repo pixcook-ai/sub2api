@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import runpy
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,109 @@ LAUNCHER = runpy.run_path(str(Path(__file__).with_name("launch.py")))
 
 
 class LauncherBoundaryTest(unittest.TestCase):
+    def test_launch_canonicalizes_owned_directory_from_symlinked_tmpdir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            target = root / "temporary"
+            target.mkdir(mode=0o700)
+            alias = root / "temporary-alias"
+            alias.symlink_to(target, target_is_directory=True)
+            entrypoint = root / "backend/cmd/server/main.go"
+            entrypoint.parent.mkdir(parents=True)
+            entrypoint.write_text("package main\n")
+            args = SimpleNamespace(main_repo=str(root), out=str(root / "main.json"),
+                                   gateway_repo=None, keep_private_logs=False)
+            observed = []
+            def inspect_directory(_gateway, data_dir):
+                observed.append(data_dir)
+                self.assertEqual(data_dir, data_dir.resolve(strict=True))
+                self.assertEqual(data_dir.parent, target)
+                marker = json.loads((data_dir / ".bps-sdk-fixture.json").read_text())
+                self.assertEqual(marker["contract_version"], 1)
+                raise RuntimeError("observed canonical directory before service startup")
+            with patch.object(tempfile, "tempdir", str(alias)), patch.dict(LAUNCHER["launch"].__globals__, {"prepare_seed_gateway": inspect_directory}):
+                with self.assertRaisesRegex(RuntimeError, "observed canonical directory"):
+                    LAUNCHER["launch"](args, {})
+            self.assertEqual(len(observed), 1)
+            self.assertFalse(observed[0].exists(), "owned temporary directory must still be cleaned")
+
+    def test_gateway_restart_descriptor_preserves_private_socket_and_legacy_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            result, _ = self.invoke(str(root))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = root / "gateway.json"
+            original = json.loads(manifest.read_text())
+            self.assertNotIn("gateway_restart", LAUNCHER["gateway_inputs"](manifest))
+            control = root / "control.sock"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(control))
+                listener.listen(1)
+                control.chmod(0o600)
+                descriptor = {"contract": "bps-fixture-gateway-restart/1", "control_socket": str(control), "supervisor_pid": os.getpid()}
+                manifest.write_text(json.dumps(original | {"gateway_restart": descriptor}))
+                observed = LAUNCHER["gateway_inputs"](manifest)
+                self.assertEqual(observed["gateway_restart"], descriptor)
+                self.assertEqual(json.loads(manifest.read_text())["gateway_restart"], descriptor)
+                self.assertEqual(control.stat().st_mode & 0o777, 0o600)
+
+    def test_gateway_restart_descriptor_rejects_public_permissions_symlinks_and_owner_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            result, _ = self.invoke(str(root))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = root / "gateway.json"
+            original = json.loads(manifest.read_text())
+            control = root / "control.sock"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(control))
+                control.chmod(0o600)
+                descriptor = {"contract": "bps-fixture-gateway-restart/1", "control_socket": str(control), "supervisor_pid": os.getpid()}
+                manifest.write_text(json.dumps(original | {"gateway_restart": descriptor}))
+                for target, mode in ((control, 0o640), (control, 0o660), (root, 0o750)):
+                    with self.subTest(target=target.name, mode=mode):
+                        target.chmod(mode)
+                        try:
+                            with self.assertRaisesRegex(ValueError, "gateway_restart"):
+                                LAUNCHER["gateway_inputs"](manifest)
+                        finally:
+                            control.chmod(0o600)
+                            root.chmod(0o700)
+                other_uid = os.getuid() + 1
+                with patch.object(os, "getuid", return_value=other_uid):
+                    with self.assertRaisesRegex(ValueError, "gateway_restart"):
+                        LAUNCHER["gateway_inputs"](manifest)
+                link = root / "link.sock"
+                link.symlink_to(control)
+                manifest.write_text(json.dumps(original | {"gateway_restart": descriptor | {"control_socket": str(link)}}))
+                with self.assertRaisesRegex(ValueError, "gateway_restart"):
+                    LAUNCHER["gateway_inputs"](manifest)
+
+    def test_gateway_restart_descriptor_rejects_untrusted_control_socket(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            result, _ = self.invoke(str(root))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = root / "gateway.json"
+            original = json.loads(manifest.read_text())
+            control = root / "control.sock"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(control))
+                control.chmod(0o600)
+                valid = {"contract": "bps-fixture-gateway-restart/1", "control_socket": str(control), "supervisor_pid": os.getpid()}
+                for mutation in ({"contract": "other"}, {"supervisor_pid": True}, {"supervisor_pid": 0}, {"supervisor_pid": 2147483648},
+                                 {"control_socket": "relative.sock"}, {"control_socket": str(root / "missing.sock")},
+                                 {"control_socket": str(root / "gateway.key")}, {"extra": True}):
+                    with self.subTest(mutation=mutation):
+                        manifest.write_text(json.dumps(original | {"gateway_restart": valid | mutation}))
+                        with self.assertRaisesRegex(ValueError, "gateway_restart"):
+                            LAUNCHER["gateway_inputs"](manifest)
+                for invalid in (None, [], "socket"):
+                    with self.subTest(invalid=invalid):
+                        manifest.write_text(json.dumps(original | {"gateway_restart": invalid}))
+                        with self.assertRaisesRegex(ValueError, "gateway_restart"):
+                            LAUNCHER["gateway_inputs"](manifest)
+
     def test_restart_identity_is_bound_to_current_launcher_process(self):
         identity = LAUNCHER.get("fixture_restart_identity")
         self.assertIsNotNone(identity, "restart identity is not implemented")

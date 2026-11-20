@@ -44,6 +44,26 @@ def private_file(value, field):
     return path.resolve(strict=True)
 
 
+def gateway_restart_descriptor(value):
+    """Validate private metadata only; the control caller rechecks before use."""
+    if (not isinstance(value, dict) or set(value) != {"contract", "control_socket", "supervisor_pid"}
+            or value.get("contract") != "bps-fixture-gateway-restart/1"
+            or type(value.get("supervisor_pid")) is not int or not 0 < value["supervisor_pid"] <= 2147483647
+            or not isinstance(value.get("control_socket"), str)):
+        raise ValueError("gateway_restart descriptor is invalid")
+    try:
+        path = Path(value["control_socket"])
+        if not path.is_absolute() or str(path) != value["control_socket"] or path.resolve(strict=True) != path:
+            raise ValueError("invalid control socket path")
+        info, parent = path.lstat(), path.parent.lstat()
+        if (not stat.S_ISSOCK(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.getuid()
+                or not stat.S_ISDIR(parent.st_mode) or stat.S_IMODE(parent.st_mode) != 0o700 or parent.st_uid != os.getuid()):
+            raise ValueError("invalid control socket permissions")
+    except (OSError, ValueError, RuntimeError):
+        raise ValueError("gateway_restart requires an owned private socket in a canonical private directory") from None
+    return dict(value)
+
+
 def gateway_inputs(manifest_path, require_managed=False):
     value = strict_json(private_read(manifest_path, "gateway_manifest"))
     if value.get("contract_version") != 1 or value.get("source") != "local":
@@ -56,6 +76,8 @@ def gateway_inputs(manifest_path, require_managed=False):
     metrics = loopback_url(value.get("bps_metrics_url"), "bps_metrics_url")
     key = private_file(value.get("api_key_file"), "api_key_file")
     value = value | {"gateway_base_url": gateway, "bps_metrics_url": metrics, "api_key_file": str(key)}
+    if "gateway_restart" in value:
+        value["gateway_restart"] = gateway_restart_descriptor(value["gateway_restart"])
     managed = value.get("managed_files")
     if managed is None:
         if require_managed:
@@ -335,7 +357,7 @@ def launch(args, gateway):
     output = Path(args.out).expanduser().absolute()
     if not output.parent.is_dir():
         raise ValueError("output manifest parent directory must exist")
-    data_dir = Path(tempfile.mkdtemp(prefix="bps-sdk-main-"))
+    data_dir = Path(tempfile.mkdtemp(prefix="bps-sdk-main-")).resolve(strict=True)
     data_dir.chmod(0o700)
     run_id = secrets.token_hex(8)
     containers = []
@@ -493,6 +515,8 @@ def launch(args, gateway):
             "restart_identity": restart_identity,
             "readiness": "http-health-only; SDK scheduling must still pass",
         })
+        if "gateway_restart" in gateway:
+            manifest["gateway_restart"] = gateway["gateway_restart"]
         output_inode = private_write(output, manifest)
         print(str(output), flush=True)
         while not stop:
