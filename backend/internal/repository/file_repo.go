@@ -30,6 +30,17 @@ const fileColumns = `id, public_id, user_id, api_key_id, group_id, storage_key, 
 const fileBudgetAdvisoryLock int64 = 0x66696c6573627564
 
 func (r *fileRepository) Reserve(ctx context.Context, file *service.StoredFile, userQuota, globalQuota int64, lease time.Duration) error {
+	return r.reserveUpload(ctx, file, userQuota, globalQuota, lease, 0, 0, 0)
+}
+
+func (r *fileRepository) ReserveUpload(ctx context.Context, file *service.StoredFile, userQuota, globalQuota int64, lease, wall time.Duration, userLimit, globalLimit int) error {
+	if wall <= 0 || userLimit <= 0 || globalLimit < userLimit {
+		return service.ErrInvalidFile
+	}
+	return r.reserveUpload(ctx, file, userQuota, globalQuota, lease, wall, userLimit, globalLimit)
+}
+
+func (r *fileRepository) reserveUpload(ctx context.Context, file *service.StoredFile, userQuota, globalQuota int64, lease, wall time.Duration, userLimit, globalLimit int) error {
 	if file == nil || file.ReservedBytes <= 0 || userQuota <= 0 || globalQuota <= 0 || lease <= 0 {
 		return fmt.Errorf("invalid Files reservation")
 	}
@@ -52,11 +63,34 @@ func (r *fileRepository) Reserve(ctx context.Context, file *service.StoredFile, 
 		file.ReservedBytes > userQuota || owned > userQuota-file.ReservedBytes {
 		return service.ErrFileQuotaExceeded
 	}
+	if userLimit > 0 {
+		var uploading, ownedUploading int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE user_id=$1)
+ FROM gateway_files WHERE state IN ('staging','tombstone')`, file.UserID).Scan(&uploading, &ownedUploading); err != nil {
+			return err
+		}
+		if uploading >= globalLimit || ownedUploading >= userLimit {
+			return service.ErrFileUploadConcurrency
+		}
+	}
+	var now time.Time
+	if err = tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return err
+	}
+	leaseUntil := now.Add(lease)
+	var deadline *time.Time
+	if wall > 0 {
+		d := now.Add(wall)
+		deadline = &d
+		if d.Before(leaseUntil) {
+			leaseUntil = d
+		}
+	}
 	err = tx.QueryRowContext(ctx, `INSERT INTO gateway_files
- (public_id,user_id,api_key_id,group_id,storage_key,filename,purpose,mime,state,reserved_bytes,upload_token,upload_lease_until)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'staging',$9,$10,clock_timestamp()+make_interval(secs=>$11::double precision))
+ (public_id,user_id,api_key_id,group_id,storage_key,filename,purpose,mime,state,reserved_bytes,upload_token,upload_lease_until,upload_deadline_at)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'staging',$9,$10,$11,$12)
  RETURNING id,created_at,lifecycle_version`, file.PublicID, file.UserID, file.APIKeyID, file.GroupID, file.StorageKey, file.Filename, file.Purpose, file.MIME,
-		file.ReservedBytes, file.UploadToken, lease.Seconds()).Scan(&file.ID, &file.CreatedAt, &file.Version)
+		file.ReservedBytes, file.UploadToken, leaseUntil, deadline).Scan(&file.ID, &file.CreatedAt, &file.Version)
 	if err != nil {
 		return err
 	}
@@ -68,11 +102,32 @@ func (r *fileRepository) Reserve(ctx context.Context, file *service.StoredFile, 
 }
 
 func (r *fileRepository) CommitUpload(ctx context.Context, id int64, token string, size int64, sha, purpose string) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE gateway_files SET state='ready',bytes=$3,reserved_bytes=$3,
- sha256=$4,purpose=$5,upload_token=NULL,upload_lease_until=NULL,updated_at=clock_timestamp()
+	_, err := r.CommitUploadWithRetention(ctx, id, token, size, sha, purpose, nil)
+	return err
+}
+
+func (r *fileRepository) CommitUploadWithRetention(ctx context.Context, id int64, token string, size int64, sha, purpose string, retention *int64) (*service.StoredFile, error) {
+	return r.commitUpload(ctx, id, token, size, sha, purpose, nil, nil, retention)
+}
+
+func (r *fileRepository) CommitUploadMetadata(ctx context.Context, id int64, token string, size int64, sha, purpose, filename, mime string, retention *int64) (*service.StoredFile, error) {
+	return r.commitUpload(ctx, id, token, size, sha, purpose, &filename, &mime, retention)
+}
+
+func (r *fileRepository) commitUpload(ctx context.Context, id int64, token string, size int64, sha, purpose string, filename, mime *string, retention *int64) (*service.StoredFile, error) {
+	if retention != nil && (*retention < 3600 || *retention > 2592000) {
+		return nil, service.ErrInvalidFileRetention
+	}
+	file, err := scanStoredFile(r.db.QueryRowContext(ctx, `UPDATE gateway_files SET state='ready',bytes=$3,reserved_bytes=$3,
+ sha256=$4,purpose=$5,filename=COALESCE($7,filename),mime=COALESCE($8,mime),expires_at=CASE WHEN $6::bigint IS NULL THEN NULL ELSE created_at+make_interval(secs=>$6::double precision) END,
+ upload_token=NULL,upload_lease_until=NULL,updated_at=clock_timestamp()
  WHERE id=$1 AND state='staging' AND upload_token=$2 AND upload_lease_until>clock_timestamp()
- AND $3>=0 AND $3<=reserved_bytes`, id, token, size, sha, purpose)
-	return fileCASResult(result, err)
+ AND (upload_deadline_at IS NULL OR upload_deadline_at>clock_timestamp())
+ AND $3>=0 AND $3<=reserved_bytes RETURNING `+fileColumns, id, token, size, sha, purpose, retention, filename, mime))
+	if errors.Is(err, service.ErrFileNotFound) {
+		return nil, service.ErrFileLeaseConflict
+	}
+	return file, err
 }
 
 func (r *fileRepository) AbortUpload(ctx context.Context, id int64, token string) (bool, error) {
@@ -87,32 +142,48 @@ func (r *fileRepository) AbortUpload(ctx context.Context, id int64, token string
 
 func (r *fileRepository) GetForOwner(ctx context.Context, userID, groupID int64, publicID string) (*service.StoredFile, error) {
 	return scanStoredFile(r.db.QueryRowContext(ctx, `SELECT `+fileColumns+` FROM gateway_files
- WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state='ready'`, publicID, userID, groupID))
+ WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state='ready'
+ AND (expires_at IS NULL OR expires_at>clock_timestamp())`, publicID, userID, groupID))
 }
 
 func (r *fileRepository) AcquireRead(ctx context.Context, userID, groupID int64, publicID, token string, lease time.Duration) (*service.StoredFile, error) {
-	if token == "" || lease <= 0 {
-		return nil, service.ErrFileLeaseConflict
+	file, _, err := r.AcquireReadGrant(ctx, userID, groupID, publicID, token, lease, lease)
+	return file, err
+}
+
+func (r *fileRepository) AcquireReadGrant(ctx context.Context, userID, groupID int64, publicID, token string, lease, drain time.Duration) (*service.StoredFile, service.FileReadGrant, error) {
+	var grant service.FileReadGrant
+	if token == "" || lease <= 0 || drain < lease {
+		return nil, grant, service.ErrFileLeaseConflict
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, grant, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
 	file, err := scanStoredFile(tx.QueryRowContext(ctx, `SELECT `+fileColumns+` FROM gateway_files
  WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state='ready' FOR UPDATE`, publicID, userID, groupID))
 	if err != nil {
-		return nil, err
+		return nil, grant, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO gateway_file_read_leases(file_id,token,lease_until)
- VALUES($1,$2,clock_timestamp()+make_interval(secs=>$3::double precision))`, file.ID, token, lease.Seconds())
+	if err = tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&grant.DBNow); err != nil {
+		return nil, grant, err
+	}
+	if file.ExpiresAt != nil && !file.ExpiresAt.After(grant.DBNow) {
+		return nil, grant, service.ErrFileNotFound
+	}
+	grant.Until = grant.DBNow.Add(lease)
+	if file.ExpiresAt != nil && file.ExpiresAt.Add(drain).Before(grant.Until) {
+		grant.Until = file.ExpiresAt.Add(drain)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO gateway_file_read_leases(file_id,token,lease_until) VALUES($1,$2,$3)`, file.ID, token, grant.Until)
 	if err != nil {
-		return nil, err
+		return nil, grant, err
 	}
 	if err = tx.Commit(); err != nil {
-		return nil, err
+		return nil, grant, err
 	}
-	return file, nil
+	return file, grant, nil
 }
 
 func (r *fileRepository) RenewUpload(ctx context.Context, id int64, token string, lease time.Duration) error {
@@ -120,36 +191,58 @@ func (r *fileRepository) RenewUpload(ctx context.Context, id int64, token string
 		return service.ErrFileLeaseConflict
 	}
 	result, err := r.db.ExecContext(ctx, `UPDATE gateway_files
- SET upload_lease_until=clock_timestamp()+make_interval(secs=>$3::double precision)
- WHERE id=$1 AND upload_token=$2 AND state='staging' AND upload_lease_until>clock_timestamp()`, id, token, lease.Seconds())
+	 SET upload_lease_until=LEAST(clock_timestamp()+make_interval(secs=>$3::double precision),upload_deadline_at)
+ WHERE id=$1 AND upload_token=$2 AND state='staging' AND upload_lease_until>clock_timestamp()
+ AND (upload_deadline_at IS NULL OR upload_deadline_at>clock_timestamp())`, id, token, lease.Seconds())
 	return fileCASResult(result, err)
 }
 
 func (r *fileRepository) RenewRead(ctx context.Context, id int64, token string, lease time.Duration) error {
-	if token == "" || lease <= 0 {
-		return service.ErrFileLeaseConflict
+	_, err := r.RenewReadGrant(ctx, id, token, lease, lease)
+	return err
+}
+
+func (r *fileRepository) RenewReadGrant(ctx context.Context, id int64, token string, lease, drain time.Duration) (service.FileReadGrant, error) {
+	var grant service.FileReadGrant
+	if token == "" || lease <= 0 || drain < lease {
+		return grant, service.ErrFileLeaseConflict
 	}
-	// Keep the same file->lease lock order as AcquireRead and a future
-	// ready->tombstone transition. An MVCC EXISTS alone could race deletion.
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return grant, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	var lockedID int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM gateway_files WHERE id=$1 AND state='ready' FOR UPDATE`, id).Scan(&lockedID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return service.ErrFileLeaseConflict
+	defer tx.Rollback()
+	file, err := scanStoredFile(tx.QueryRowContext(ctx, `SELECT `+fileColumns+` FROM gateway_files WHERE id=$1 FOR UPDATE`, id))
+	if errors.Is(err, service.ErrFileNotFound) {
+		return grant, service.ErrFileLeaseConflict
 	}
 	if err != nil {
-		return err
+		return grant, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE gateway_file_read_leases SET lease_until=clock_timestamp()+make_interval(secs=>$3::double precision)
- WHERE file_id=$1 AND token=$2 AND lease_until>clock_timestamp()`, id, token, lease.Seconds())
+	if file.State != "ready" && file.State != "retired" {
+		return grant, service.ErrFileLeaseConflict
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&grant.DBNow); err != nil {
+		return grant, err
+	}
+	grant.Until = grant.DBNow.Add(lease)
+	if file.ExpiresAt != nil && file.ExpiresAt.Add(drain).Before(grant.Until) {
+		grant.Until = file.ExpiresAt.Add(drain)
+	}
+	if file.ReadDrainUntil != nil && file.ReadDrainUntil.Before(grant.Until) {
+		grant.Until = *file.ReadDrainUntil
+	}
+	if !grant.Until.After(grant.DBNow) {
+		return grant, service.ErrFileLeaseConflict
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE gateway_file_read_leases SET lease_until=$3 WHERE file_id=$1 AND token=$2 AND lease_until>$4`, id, token, grant.Until, grant.DBNow)
 	if err = fileCASResult(result, err); err != nil {
-		return err
+		return grant, err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return grant, err
+	}
+	return grant, nil
 }
 
 func (r *fileRepository) ReleaseRead(ctx context.Context, id int64, token string) error {
