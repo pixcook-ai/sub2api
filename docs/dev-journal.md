@@ -94,3 +94,9 @@ Three new actual PostgreSQL combination tests pass using the normal repository T
 Final affected ordinary service/handler regression on the combined candidate passed 179 tests/subtests, none failed or skipped (session 20690; service 1.875s, handler 1.670s; `/tmp/bps-0708-final-ordinary.jsonl`). It includes managed files, request collection, private BPS file control transport, single-send generation, failure/stream boundaries, marked policy rejection and cooldown selection. Actual Wire regeneration after the main merge succeeded without generated or dependency changes (session 4111). Independent Spec and Standards combination reviews report no P1/P2 findings in this bounded diff.
 
 The focused combined race attempt could not build because the linker/vet ran out of disk space (session 23749); it is not passing race evidence. The earlier full service package run timed out at 180s and is not a passing whole-package result. No real BPS calls, push, deployment or Issue closure occurred. The official dual-SDK main-base-URL/auth/scheduler/gateway/fake-BPS composition and authorized real-BPS document/search/artifact checks remain separate required gates. The heavy Go slot was released to the stored-response/SDK fixture owner immediately after the final affected regression.
+
+## 2026-11-20 — BPS compatibility 03: immutable tool-case fixture snapshot
+
+按已冻结的 SDK 夹具接口，主仓启动器将 `scripts/sdk-conformance/cases/tools.json` 纳入第五份只读源码快照及 `gateway_source_files_sha256`，并向快照中的 wrapper 显式传递绝对 `--tool-cases` 路径。原 SSE 合同、两份 Go 源及既有场景保持不变；工具和文件场景使用的 `store:false` 由 SDK 合同定义，本次不改变请求政策或生产转发逻辑。
+
+TDD 首先复现快照缺少工具合同，再复现启动参数缺少 `--tool-cases`；对应修复后，全部 20 项启动器 Python 测试通过（10.092s，ResourceWarning 按错误处理）。新增启动接缝测试截获子进程参数，不启动 Go、Docker 或 BPS；快照测试验证源文件改动不影响只读副本和独立 SHA-256。本次未改正在正式验收的 `sub2api-files-20261120` 工作树，也未操作旧夹具 49874。新版 11 项工具场景的真实主仓/双 SDK/网关组合仍须由主线另行验收；无 Go 构建、数据库、真实 BPS、推送或部署完成声明。
