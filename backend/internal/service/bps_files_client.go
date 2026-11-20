@@ -202,11 +202,12 @@ func (b *BPSFilesBackend) Describe(ctx context.Context) (managedfiles.DescribeRe
 	if err != nil {
 		return result, err
 	}
+	req.Header.Set(managedfiles.RecoveryFeatureHeader, "bps-metadata-recovery/1")
 	if err = b.execute(req, &result, false); err != nil {
 		return managedfiles.DescribeResult{}, err
 	}
 	l := result.Limits
-	if result.Contract != managedfiles.Contract || result.JSONProfile != managedfiles.JSONProfile || result.Identity != b.config.Expected || !result.Capabilities.BatchAdmit || !result.Capabilities.EnsureUpload || result.Capabilities.MetadataRecovery || l.FileBytes <= 0 || l.FileBytes > managedfiles.MaxFileBytes || l.MessageBytes <= 0 || l.MessageBytes > managedfiles.MaxMessageBytes || l.MessagePositions <= 0 || l.MessagePositions > managedfiles.MaxMessagePositions || l.StagingBytes <= 0 || l.AdmissionBytes <= 0 || l.ConcurrentAdmissions <= 0 || l.LiveAdmissions <= 0 || l.AdmissionTTLSeconds <= 0 || l.ManifestBytes <= 0 || l.ManifestBytes > managedfiles.MaxJSONBytes || l.UniqueFiles <= 0 || l.UniqueFiles > managedfiles.MaxUniqueFiles || l.FreeSpaceReserveBytes < 0 || l.AdmitTimeoutSeconds <= 0 || l.EnsureTimeoutSeconds <= 0 {
+	if result.Contract != managedfiles.Contract || result.JSONProfile != managedfiles.JSONProfile || result.Identity != b.config.Expected || !result.Capabilities.BatchAdmit || !result.Capabilities.EnsureUpload || l.FileBytes <= 0 || l.FileBytes > managedfiles.MaxFileBytes || l.MessageBytes <= 0 || l.MessageBytes > managedfiles.MaxMessageBytes || l.MessagePositions <= 0 || l.MessagePositions > managedfiles.MaxMessagePositions || l.StagingBytes <= 0 || l.AdmissionBytes <= 0 || l.ConcurrentAdmissions <= 0 || l.LiveAdmissions <= 0 || l.AdmissionTTLSeconds <= 0 || l.ManifestBytes <= 0 || l.ManifestBytes > managedfiles.MaxJSONBytes || l.UniqueFiles <= 0 || l.UniqueFiles > managedfiles.MaxUniqueFiles || l.FreeSpaceReserveBytes < 0 || l.AdmitTimeoutSeconds <= 0 || l.EnsureTimeoutSeconds <= 0 {
 		return managedfiles.DescribeResult{}, bpsFilesError("invalid_description")
 	}
 	return result, nil

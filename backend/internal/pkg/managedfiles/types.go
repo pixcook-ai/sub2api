@@ -21,6 +21,9 @@ const (
 	BindingHeader             = "X-Bps-File-Binding"
 )
 
+// RecoveryFeatureHeader is negotiated only on the authenticated Describe route.
+const RecoveryFeatureHeader = "X-Bps-Files-Recovery"
+
 type Identity struct {
 	BackendID            string `json:"backend_id"`
 	SubjectFingerprint   string `json:"subject_fingerprint"`
