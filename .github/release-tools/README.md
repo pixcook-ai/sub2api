@@ -21,7 +21,7 @@ The frontend builds once; GoReleaser OSS runs one configured target per runner. 
 ## Nonpublishing validation
 
 ```bash
-rtk gh workflow run release.yml --ref <workflow-branch> \
+rtk gh workflow run release.yml --repo pixcook-ai/sub2api --ref <workflow-branch> \
   -f tag=<candidate-branch-or-sha> -f dry_run=true -f simple_release=true
 ```
 

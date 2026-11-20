@@ -205,3 +205,10 @@ URL历史诊断完整保留：1836额外请求因native夹具330MiB留存加200M
 - 新增 image 托管更新模式，拒绝继承 KlN 二进制更新/回滚；独立部署及既有应用覆盖分开，既有部署禁止顺带改 PG/卷/密钥。
 - 本地发布工具15项、同步7项、部署11项通过；actionlint/Bash语法/diff检查通过。完整合并后unit在运行，其余集成验收与远程dry-run尚待记录；不把旧Tibo/BPS单独结果当组合证据。
 - 生产未切换；自动同步缺专用 SYNC_GITHUB_TOKEN，不能声明定时同步已启用。具体部署、备份和质量隔离回滚见 docs/pixcook-release.md。
+
+- 合并后完整unit：33547 pass/60 skip，失败仅StoredResponses两处顶层测试（含子测试4项）。实时授权新增GroupRepository，原夹具缺失；仅为两处安装当前分组snapshot，不改变生产检查。完整handler重验中。远程普通CI另有继承代码lint失败，完整日志私有保存在/tmp/pixcook-ci-44737020101.log；发布前仍需清理并复核，未宣称全绿。
+
+- 最新窄验证：handler2579pass/1skip，Tibo/BPS/隔离/更新保护race284pass，真实PG88pass。远端首轮dry-run前端、来源、契约、linux-amd64归档通过，backend因已修复旧夹具失败而正确阻止release。
+- CI揭示WebP可达漏洞GO-2026-6222/5061/4961，官方vuln.go.dev确认x/image0.45.0统一修复，已最小升级（不tidy）。同时清理errcheck、等价静态规则与无调用遗留私有函数；私有文件root仅operator配置，保留no-follow/descriptor围栏并注明G703边界。最终修改后必须重验。
+
+- 最新源码e1c1c3c03安全扫描通过；最新完整门禁dry-run44743498402运行中。部署无生产写入，自有镜像尚未发布；定时同步专用token仍缺失。
