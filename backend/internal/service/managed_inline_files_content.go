@@ -53,6 +53,12 @@ func validateManagedInlineContent(ctx context.Context, d ManagedInlineFileDescri
 	open := func() io.Reader {
 		return base64.NewDecoder(base64.StdEncoding.Strict(), managedInlineContextReader{ctx: ctx, reader: strings.NewReader(encoded)})
 	}
+	return validateManagedFileContent(ctx, d, open)
+}
+
+// Both inline data and downloaded bytes pass the same content policy. The
+// opener supplies a fresh reader at offset zero for each bounded inspection.
+func validateManagedFileContent(ctx context.Context, d ManagedInlineFileDescriptor, open func() io.Reader) error {
 	var prefix [16]byte
 	n, _ := io.ReadFull(open(), prefix[:])
 	if err := ctx.Err(); err != nil {
