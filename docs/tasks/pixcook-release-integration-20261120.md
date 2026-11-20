@@ -37,3 +37,10 @@
 - 专用 `SYNC_GITHUB_TOKEN` 仍缺失，定时同步在任何写入前停止；未上传个人CLI凭证。真实自动PR行为尚未验证。
 - 生产尚未切换；真实上游账号灰度、生产备份恢复、固定镜像digest部署验收仍待单独执行。旧本地18080服务仍为原测试构建，不自动替换。
 - 代码索引服务因外置盘迁移暂停调用，未重启服务。
+
+## 正式发布结果
+
+- `v0.2.23-pixcook.1` 发布流水线44771988597全部通过，同一源码5cc87fa8b，平台Linux amd64。GitHub Release为预发布版。
+- 发布产物记录的镜像：`ghcr.io/pixcook-ai/sub2api@sha256:52d67167e517297b401cedf57b8960e5425c2f16d6392caabe0e95f357db9ee5`。来源和manifest已保存到docs/verification/pixcook-release-20261121.json。
+- 匿名GHCR读取返回401，当前CLI凭证无read:packages，临时私有Docker配置认证后仍无法读manifest；未保存/上传个人凭证。需具有read:packages的部署凭证或公开包可见性后才能验收服务器拉取。发布artifact来源已验证，独立拉取未通过。
+- 专用SYNC_GITHUB_TOKEN仍缺失，自动同步尚未启用；测试环境和生产未切换，原18080本地测试服务未更新。

@@ -214,3 +214,5 @@ URL历史诊断完整保留：1836额外请求因native夹具330MiB留存加200M
 - 最新源码e1c1c3c03安全扫描通过；最新完整门禁dry-run44743498402运行中。部署无生产写入，自有镜像尚未发布；定时同步专用token仍缺失。
 
 - 最终候选5cc87fa8b远端dry-run44757345587全部通过（unit/integration/race/lint/security/frontend/OCI）。本地完整integration19906pass/35skip，最终受影响1410pass/1skip。自动同步仍缺专用token；未发布镜像、未生产切换。详细记录见任务文档。
+
+- 正式发布v0.2.23-pixcook.1/44771988597全部通过，固定digest见docs/verification/pixcook-release-20261121.json。GHCR匿名401且CLI缺read:packages，服务器拉取待配置；SYNC专用token仍缺。生产未切换。

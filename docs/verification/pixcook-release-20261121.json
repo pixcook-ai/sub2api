@@ -1,0 +1,22 @@
+{
+  "release_tag": "v0.2.23-pixcook.1",
+  "workflow_run": 44771988597,
+  "workflow_conclusion": "success",
+  "dry_run": 44757345587,
+  "image": "ghcr.io/pixcook-ai/sub2api@sha256:52d67167e517297b401cedf57b8960e5425c2f16d6392caabe0e95f357db9ee5",
+  "platform": "linux/amd64",
+  "source": {
+    "source_sha": "5cc87fa8b429053fd6e898554dc4305926ea2ae5",
+    "version": "0.2.23-pixcook.1",
+    "tag": "v0.2.23-pixcook.1",
+    "image": "ghcr.io/pixcook-ai/sub2api",
+    "upstream": {
+      "repository": "KlN-4096/sub2api",
+      "tag": "v0.2.23-klno.1",
+      "sha": "249125a7737999da2fbe561718b76aaaf189b753"
+    }
+  },
+  "registry_read_verification": "anonymous pull 401; local GitHub credential lacks read:packages; deployment pull unverified",
+  "production_deployed": false,
+  "sync_credential_configured": false
+}
