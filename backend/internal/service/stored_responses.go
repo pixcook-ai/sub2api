@@ -81,6 +81,7 @@ type StoredResponseTerminal struct {
 type StoredResponseRepository interface {
 	Reserve(context.Context, *StoredResponse, StoredResponseLimits, time.Duration, time.Duration) error
 	GetForOwner(context.Context, int64, int64, string) (*StoredResponse, error)
+	GetManagementModel(context.Context, int64, int64, string) (string, error)
 	Finalize(context.Context, string, string, int64, StoredResponseTerminal) (*StoredResponse, error)
 	Renew(context.Context, string, string, int64, time.Duration) error
 	Delete(context.Context, int64, int64, string) error

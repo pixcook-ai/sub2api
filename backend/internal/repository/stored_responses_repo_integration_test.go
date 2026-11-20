@@ -215,3 +215,58 @@ func TestStoredResponseRepositoryFailedCommitRollsBackContentAndBudget(t *testin
 	_, err = repo.Finalize(ctx, record.PublicID, record.LeaseToken, record.Version, terminal)
 	require.NoError(t, err)
 }
+
+func TestStoredResponseRepositoryManagementModelScopesLiveRecordsAndDeletedTombstones(t *testing.T) {
+	ctx := context.Background()
+	repo, next := storedResponseFixture(t)
+	limits := service.DefaultStoredResponseConfig().Limits
+	record := next()
+	record.Model, record.ResolvedModel = "public-client-model", "private-resolved-model"
+	require.NoError(t, repo.Reserve(ctx, record, limits, 30*24*time.Hour, time.Minute))
+
+	model, err := repo.GetManagementModel(ctx, record.UserID, record.GroupID, record.PublicID)
+	require.NoError(t, err)
+	require.Equal(t, record.Model, model, "authorization must use the original client model")
+	for _, tc := range []struct {
+		name            string
+		userID, groupID int64
+		id              string
+	}{
+		{name: "other user", userID: record.UserID + 1, groupID: record.GroupID, id: record.PublicID},
+		{name: "other group", userID: record.UserID, groupID: record.GroupID + 1, id: record.PublicID},
+		{name: "invalid user", groupID: record.GroupID, id: record.PublicID},
+		{name: "invalid group", userID: record.UserID, id: record.PublicID},
+		{name: "unknown response", userID: record.UserID, groupID: record.GroupID, id: next().PublicID},
+		{name: "invalid response", userID: record.UserID, groupID: record.GroupID, id: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model, err := repo.GetManagementModel(ctx, tc.userID, tc.groupID, tc.id)
+			require.ErrorIs(t, err, service.ErrStoredResponseNotFound)
+			require.Empty(t, model)
+		})
+	}
+
+	_, err = repo.Finalize(ctx, record.PublicID, record.LeaseToken, record.Version, storedTerminal(t, record, "completed"))
+	require.NoError(t, err)
+	require.NoError(t, repo.Delete(ctx, record.UserID, record.GroupID, record.PublicID))
+	model, err = NewStoredResponseRepository(integrationDB).GetManagementModel(ctx, record.UserID, record.GroupID, record.PublicID)
+	require.NoError(t, err)
+	require.Equal(t, record.Model, model, "deleted tombstone retains only the model needed for repeated DELETE authorization")
+	_, err = repo.GetForOwner(ctx, record.UserID, record.GroupID, record.PublicID)
+	require.ErrorIs(t, err, service.ErrStoredResponseNotFound, "metadata must not make deleted public content readable")
+	require.NoError(t, repo.Delete(ctx, record.UserID, record.GroupID, record.PublicID))
+	_, err = repo.GetManagementModel(ctx, record.UserID+1, record.GroupID, record.PublicID)
+	require.ErrorIs(t, err, service.ErrStoredResponseNotFound)
+	_, err = repo.GetManagementModel(ctx, record.UserID, record.GroupID+1, record.PublicID)
+	require.ErrorIs(t, err, service.ErrStoredResponseNotFound)
+
+	active := next()
+	require.NoError(t, repo.Reserve(ctx, active, limits, 30*24*time.Hour, time.Minute))
+	for _, expired := range []*service.StoredResponse{record, active} {
+		_, err = integrationDB.ExecContext(ctx, `UPDATE gateway_stored_responses SET created_at=clock_timestamp()-interval '2 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE public_id=$1`, expired.PublicID)
+		require.NoError(t, err)
+		model, err = repo.GetManagementModel(ctx, expired.UserID, expired.GroupID, expired.PublicID)
+		require.ErrorIs(t, err, service.ErrStoredResponseNotFound)
+		require.Empty(t, model, "expired active records and tombstones both stop authorizing management")
+	}
+}

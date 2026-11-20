@@ -175,16 +175,17 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		c.Request = c.Request.WithContext(ctx)
 		billingInfoRequest := c.Request.URL.Path == "/v1/sub2api/billing"
 		filesRequest := isFileManagementRequest(c.Request.Method, c.Request.URL.Path)
-		// Files management is unbilled, but an expired credential is never a
+		resourceRequest := filesRequest || isStoredResponseManagementRequest(c.Request.Method, c.Request.URL.Path)
+		// Resource management is unbilled, but an expired credential is never a
 		// valid identity. Enforce time even in SimpleMode and when status is active.
-		if filesRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
+		if resourceRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
 			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key has expired")
 			return
 		}
 		// Subscription membership grants access to subscription groups. Keep
 		// that authorization separate from inference spending/window limits,
 		// including in SimpleMode; exhausted budgets alone do not revoke it.
-		if filesRequest && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
+		if resourceRequest && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
 			if subscriptionService == nil {
 				AbortWithError(c, http.StatusServiceUnavailable, "SUBSCRIPTION_AUTH_UNAVAILABLE", "Group authorization is temporarily unavailable")
 				return
@@ -243,7 +244,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
 		// generation consumes the key's remaining balance.
-		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || filesRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
+		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || resourceRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
 
 		// ── 4. SimpleMode → early return ─────────────────────────────
 
@@ -268,7 +269,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 
 		// 倍率自省不需要订阅数据；/v1/usage 仍保留原有订阅读取行为。
-		if isSubscriptionType && subscriptionService != nil && !billingInfoRequest && !filesRequest {
+		if isSubscriptionType && subscriptionService != nil && !billingInfoRequest && !resourceRequest {
 			sub, subErr := subscriptionService.GetActiveSubscription(
 				c.Request.Context(),
 				apiKey.User.ID,

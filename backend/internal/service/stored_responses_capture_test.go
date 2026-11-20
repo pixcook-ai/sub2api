@@ -246,6 +246,9 @@ func TestStoredResponsePartialCapacityIncludesClientInstructions(t *testing.T) {
 func (d *captureTestDB) GetForOwner(context.Context, int64, int64, string) (*StoredResponse, error) {
 	return nil, ErrStoredResponseNotFound
 }
+func (d *captureTestDB) GetManagementModel(context.Context, int64, int64, string) (string, error) {
+	return "", ErrStoredResponseNotFound
+}
 func (d *captureTestDB) Finalize(_ context.Context, _ string, _ string, _ int64, v StoredResponseTerminal) (*StoredResponse, error) {
 	if d.finishErr != nil {
 		return nil, d.finishErr
