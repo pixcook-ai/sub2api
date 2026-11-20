@@ -78,6 +78,7 @@ const gatewayForwardingDBTimeout = 5 * time.Second
 type cachedAccountSchedulingThresholds struct {
 	thresholds map[string]int
 	expiresAt  int64 // unix nano
+	complete   bool  // successful read or explicit update, not an error fallback
 }
 
 var accountSchedulingThresholdsCache atomic.Value // *cachedAccountSchedulingThresholds
@@ -136,6 +137,7 @@ const claudeCodeClientVersionSFKey = "claude_code_client_version"
 type cachedOpenAIQuotaAutoPauseSettings struct {
 	settings  OpsOpenAIAccountQuotaAutoPauseSettings
 	expiresAt int64
+	complete  bool // successful read or explicit update, not an error fallback
 }
 
 const openAICodexUserAgentCacheTTL = 60 * time.Second
@@ -1138,12 +1140,15 @@ func (s *SettingService) refreshOpenAIQuotaAutoPauseSettings(ctx context.Context
 
 	settings := OpsOpenAIAccountQuotaAutoPauseSettings{}
 	ttl := openAIQuotaAutoPauseSettingsCacheTTL
+	complete := true
 	raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpsAdvancedSettings)
 	if err == nil {
 		cfg := defaultOpsAdvancedSettings()
 		if strings.TrimSpace(raw) != "" {
 			if jsonErr := json.Unmarshal([]byte(raw), cfg); jsonErr == nil {
 				normalizeOpsAdvancedSettings(cfg)
+			} else {
+				complete = false
 			}
 		}
 		settings = cfg.OpenAIAccountQuotaAutoPause
@@ -1153,11 +1158,13 @@ func (s *SettingService) refreshOpenAIQuotaAutoPauseSettings(ctx context.Context
 			settings = prior.settings
 		}
 		ttl = openAIQuotaAutoPauseSettingsErrorTTL
+		complete = false
 	}
 
 	s.openAIQuotaAutoPauseSettingsCache.Store(&cachedOpenAIQuotaAutoPauseSettings{
 		settings:  settings,
 		expiresAt: time.Now().Add(ttl).UnixNano(),
+		complete:  complete,
 	})
 }
 
@@ -1171,5 +1178,6 @@ func (s *SettingService) SetOpenAIQuotaAutoPauseSettings(settings OpsOpenAIAccou
 	s.openAIQuotaAutoPauseSettingsCache.Store(&cachedOpenAIQuotaAutoPauseSettings{
 		settings:  settings,
 		expiresAt: time.Now().Add(openAIQuotaAutoPauseSettingsCacheTTL).UnixNano(),
+		complete:  true,
 	})
 }

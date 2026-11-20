@@ -1782,7 +1782,26 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 // request, and when it cannot, names the veto point. The reason feeds
 // openAISelectionFilterStats so that "no available accounts" errors state why
 // each candidate was dropped instead of failing silently (#4599).
+type openAIAccountCompatibilityChecks struct {
+	runtimeBlocked    func(*Account, string) bool
+	channelRestricted func(*Account, OpenAIAccountScheduleRequest) bool
+}
+
 func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) (bool, string) {
+	checks := openAIAccountCompatibilityChecks{}
+	if s != nil && s.service != nil {
+		checks.runtimeBlocked = s.service.isOpenAIAccountRequestRuntimeBlocked
+		checks.channelRestricted = func(account *Account, req OpenAIAccountScheduleRequest) bool {
+			return req.GroupID != nil && s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
+				s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact)
+		}
+	}
+	return s.isAccountRequestCompatibleReasonWithChecks(ctx, account, req, checks)
+}
+
+// The diagnostic path supplies read-only runtime/channel snapshots while sharing
+// all remaining request policy with ordinary selection.
+func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReasonWithChecks(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest, checks openAIAccountCompatibilityChecks) (bool, string) {
 	if account == nil {
 		return false, "account_nil"
 	}
@@ -1794,7 +1813,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if req.RequirePrivacySet && !account.IsPrivacySet() {
 		return false, "privacy_not_set"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
+	if checks.runtimeBlocked != nil && checks.runtimeBlocked(account, req.RequestedModel) {
 		return false, "runtime_blocked"
 	}
 	// 模型级限流（spark 429）也要在主过滤就排掉：否则停着的账号挤占 TopK 名额，
@@ -1830,9 +1849,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if req.RequestedModel != "" && !supportsOpenAIRequestModel(account, req.RequestedModel, req.RequireCompact) {
 		return false, "model_not_supported"
 	}
-	if req.GroupID != nil && s != nil && s.service != nil &&
-		s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
-		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
+	if checks.channelRestricted != nil && checks.channelRestricted(account, req) {
 		return false, "channel_upstream_restricted"
 	}
 	if !accountSupportsOpenAICapabilities(account, req.RequiredCapability, req.RequiredImageCapability) {

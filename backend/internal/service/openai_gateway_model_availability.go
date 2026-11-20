@@ -34,6 +34,15 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
 	}
 
+	accounts, err := s.listOpenAIModelAvailabilityCandidates(ctx, groupID, platform)
+	if err != nil {
+		// Preserve the conservative 503 fallback on lookup failure.
+		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
+	}
+	return diagnoseOpenAIModelAvailabilityCandidates(accounts, requestedModel)
+}
+
+func (s *OpenAIGatewayService) listOpenAIModelAvailabilityCandidates(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	queryGroupID := groupID
 	includeGrouped := false
@@ -41,18 +50,10 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 		queryGroupID = nil
 		includeGrouped = true
 	}
-	accounts, err := s.accountRepo.ListModelAvailabilityCandidates(
-		ctx,
-		queryGroupID,
-		[]string{platform},
-		includeGrouped,
-	)
-	if err != nil {
-		// Conservative fallback so the caller keeps returning 503; we do not
-		// want a transient lookup failure to flip into 404 model_not_found.
-		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
-	}
+	return s.accountRepo.ListModelAvailabilityCandidates(ctx, queryGroupID, []string{platform}, includeGrouped)
+}
 
+func diagnoseOpenAIModelAvailabilityCandidates(accounts []Account, requestedModel string) ModelAvailabilityDiagnosis {
 	diag := ModelAvailabilityDiagnosis{}
 	for i := range accounts {
 		diag.HasAccountsInPool = true
