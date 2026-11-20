@@ -194,3 +194,14 @@ URL使用另一个1858隔离实例补验，不混入124矩阵：官方双SDK各�
 URL历史诊断完整保留：1836额外请求因native夹具330MiB留存加200MiB预留超过512MiB总量而507→502→503；1858 a1请求实际成功，但补验脚本误认上传传输顺序，修正为验证最终文档顺序后在独立a2 key范围重跑。没有改生产下载器、放宽SSRF/容量或抹去a1残留来制造通过。URL仅覆盖本次JSON、指定公共文本源与一个私网地址拒绝，不代表任意URL/SSE/全部SSRF分支或真实BPS理解。
 
 本次证据不验证物理文件系统清理、未来TTL sweep或两个Files DELETE案例的逐例PG关联。Stored仍为本地纯文本生命周期；客户端auto tool_search不等于网页搜索；同身份metadata recovery不等于跨后端迁移。required/forced/allowed_tools、工具来源文件、previous_response_id及跨后端迁移仍有实质缺口；真实BPS文档、搜索、产物与远端删除门未通过。未执行真实BPS、推送、部署、生产配置变更或Issue关闭。
+
+
+## 2026-11-20 Pixcook 长期集成与自有镜像发布
+
+- 基于 Tibo `30282b32f` 合入 BPS `b9025b3d3`，集成 merge `48bb3b5`；保留双方 journal。
+- 稳定上游固定 `v0.2.23-klno.1` / `249125a7737999da2fbe561718b76aaaf189b753`，已是候选祖先；baseline JSON 记录实际来源。
+- 同步改为普通 merge 候选 PR，保留本仓 .github，仅更新来源；不推原始上游分支，防止携带的工作流被触发；不 force/reset/main 回写。
+- 发布仅接受 Pixcook 版本，固定源码 SHA、自有镜像标签及 digest；默认 dry-run，CI 先验证 unit/integration/race/frontend 和发布/同步/部署契约。
+- 新增 image 托管更新模式，拒绝继承 KlN 二进制更新/回滚；独立部署及既有应用覆盖分开，既有部署禁止顺带改 PG/卷/密钥。
+- 本地发布工具15项、同步7项、部署11项通过；actionlint/Bash语法/diff检查通过。完整合并后unit在运行，其余集成验收与远程dry-run尚待记录；不把旧Tibo/BPS单独结果当组合证据。
+- 生产未切换；自动同步缺专用 SYNC_GITHUB_TOKEN，不能声明定时同步已启用。具体部署、备份和质量隔离回滚见 docs/pixcook-release.md。
