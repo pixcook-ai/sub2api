@@ -352,6 +352,26 @@ func (r *storedResponseRepository) GetForOwner(ctx context.Context, userID, grou
 	return scanStoredResponse(r.db.QueryRowContext(ctx, `SELECT `+storedResponseColumns+` FROM gateway_stored_responses WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state<>'deleted' AND expires_at>clock_timestamp()`, id, userID, groupID))
 }
 
+// GetManagementModel deliberately includes deleted tombstones. It retains the
+// authorization boundary for idempotent DELETE without exposing response content.
+func (r *storedResponseRepository) GetManagementModel(ctx context.Context, userID, groupID int64, id string) (string, error) {
+	if userID <= 0 || groupID <= 0 || !storedResponseIDValid(id) {
+		return "", service.ErrStoredResponseNotFound
+	}
+	if r == nil || r.db == nil {
+		return "", errors.New("stored response persistence unavailable")
+	}
+	var model string
+	err := r.db.QueryRowContext(ctx, `SELECT model FROM gateway_stored_responses WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND expires_at>clock_timestamp()`, id, userID, groupID).Scan(&model)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", service.ErrStoredResponseNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return model, nil
+}
+
 // lockRecord takes the global budget before an owner or response row, matching
 // Reserve/Delete/Sweep. The unlocked owner lookup is safe while global is held.
 func lockStoredRecord(ctx context.Context, tx *sql.Tx, id string) (*service.StoredResponse, error) {
