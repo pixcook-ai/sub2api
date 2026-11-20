@@ -191,6 +191,74 @@ func TestManagedFixtureAccountsUseActualExplicitCapabilityGate(t *testing.T) {
 	}
 }
 
+func TestStoredFixtureAccountsKeepIndependentLocalResponseCapability(t *testing.T) {
+	managed := &managedFixture{ControlURL: "http://127.0.0.1:8790", ServiceKey: "private-service-key-0123456789abcdef",
+		Description: managedfiles.DescribeResult{Identity: managedfiles.Identity{BackendID: "fixture-backend", SubjectFingerprint: "sha256:" + strings.Repeat("a", 64), CredentialGeneration: "fixture-generation"}}}
+	for _, scenario := range []string{"python/stored-default-json", "javascript/stored-false-sse"} {
+		credentials := fixtureAccountCredentials("http://127.0.0.1:8790/v1", "public-key", scenario, managed)
+		if credentials["bps_responses_contract"] != "local-responses/1" || credentials["bps_responses_control_url"] != managed.ControlURL || credentials["bps_responses_service_key"] != managed.ServiceKey {
+			t.Fatalf("stored scenario %s lacks the private local responses contract", scenario)
+		}
+		if credentials["bps_responses_backend_id"] != managed.Description.BackendID || credentials["bps_responses_subject_fingerprint"] != managed.Description.SubjectFingerprint || credentials["bps_responses_credential_generation"] != managed.Description.CredentialGeneration {
+			t.Fatalf("stored scenario %s has a different backend identity", scenario)
+		}
+		capabilities, _ := credentials["openai_capabilities"].([]string)
+		if strings.Join(capabilities, ",") != "bps_local_responses,chat_completions,responses" {
+			t.Fatalf("stored scenario %s capabilities = %v", scenario, capabilities)
+		}
+		if _, exists := credentials["bps_files_contract"]; exists {
+			t.Fatal("stored capability must not imply public managed Files support")
+		}
+	}
+}
+
+func TestStoredFixtureScenariosAppendWithoutChangingExistingPools(t *testing.T) {
+	base := fixtureScenarios(true)
+	original := append([]string(nil), base...)
+	combined := appendStoredFixtureScenarios(base)
+	if len(combined) != len(original)+14 {
+		t.Fatalf("stored scenarios added %d entries, want 14", len(combined)-len(original))
+	}
+	for i, scenario := range original {
+		if combined[i] != scenario {
+			t.Fatalf("existing scenario %d changed from %s to %s", i, scenario, combined[i])
+		}
+	}
+	for i, scenario := range []string{"stored-default-json", "stored-true-json", "stored-default-sse", "stored-true-sse", "stored-false-json", "stored-false-sse", "stored-lifecycle"} {
+		if combined[len(original)+i] != "python/"+scenario || combined[len(original)+7+i] != "javascript/"+scenario {
+			t.Fatalf("stored scenario %s is missing or assigned to a shared pool", scenario)
+		}
+	}
+}
+
+func TestCLIStoredFixtureRequiresVerifiedControlPlaneBeforeDatabase(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "verified", true: "missing"}[missing], func(t *testing.T) {
+			dir, gateway := managedSeedInputs(t)
+			if missing {
+				delete(gateway, "managed_files")
+			}
+			raw, err := json.Marshal(gateway)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "stored-gateway.json")
+			if err = os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err = run([]string{"--fixture-dir", dir, "--gateway-manifest", path, "--fixture-out", filepath.Join(dir, "seed.json"), "--main-commit", "test", "--require-stored-responses"}, &out)
+			want := "fixture config"
+			if missing {
+				want = "managed fixture"
+			}
+			if err == nil || !strings.Contains(err.Error(), want) || out.Len() != 0 {
+				t.Fatalf("stored flag reached wrong setup boundary: %v, output bytes %d", err, out.Len())
+			}
+		})
+	}
+}
+
 func TestCLIRejectsDirectoryWithoutFixtureMarker(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer

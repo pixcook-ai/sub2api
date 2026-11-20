@@ -110,6 +110,15 @@ func fixtureScenarios(managed bool) []string {
 	return scenarios
 }
 
+func appendStoredFixtureScenarios(scenarios []string) []string {
+	for _, sdk := range []string{"python", "javascript"} {
+		for _, scenario := range []string{"stored-default-json", "stored-true-json", "stored-default-sse", "stored-true-sse", "stored-false-json", "stored-false-sse", "stored-lifecycle"} {
+			scenarios = append(scenarios, sdk+"/"+scenario)
+		}
+	}
+	return scenarios
+}
+
 func fixtureAccountCredentials(upstream, key, scenario string, managed *managedFixture) map[string]any {
 	credentials := map[string]any{"base_url": upstream, "api_key": key}
 	if managed != nil && strings.Contains(scenario, "/managed-file-") {
@@ -120,6 +129,15 @@ func fixtureAccountCredentials(upstream, key, scenario string, managed *managedF
 		credentials["bps_files_backend_id"] = managed.Description.BackendID
 		credentials["bps_files_subject_fingerprint"] = managed.Description.SubjectFingerprint
 		credentials["bps_files_credential_generation"] = managed.Description.CredentialGeneration
+	}
+	if managed != nil && strings.Contains(scenario, "/stored-") {
+		credentials["openai_capabilities"] = []string{"bps_local_responses", "chat_completions", "responses"}
+		credentials["bps_responses_contract"] = "local-responses/1"
+		credentials["bps_responses_control_url"] = managed.ControlURL
+		credentials["bps_responses_service_key"] = managed.ServiceKey
+		credentials["bps_responses_backend_id"] = managed.Description.BackendID
+		credentials["bps_responses_subject_fingerprint"] = managed.Description.SubjectFingerprint
+		credentials["bps_responses_credential_generation"] = managed.Description.CredentialGeneration
 	}
 	return credentials
 }
@@ -254,6 +272,7 @@ func run(args []string, out io.Writer) error {
 	commit := fs.String("main-commit", "", "")
 	output := fs.String("fixture-out", "", "")
 	requireManaged := fs.Bool("require-managed-files", false, "")
+	requireStored := fs.Bool("require-stored-responses", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -315,7 +334,7 @@ func run(args []string, out io.Writer) error {
 	if len(strings.TrimSpace(string(key))) == 0 {
 		return errors.New("empty gateway key")
 	}
-	managed, err := validateManagedFixture(gateway.ManagedFiles, gateway.BaseURL, strings.TrimSpace(string(key)), *requireManaged)
+	managed, err := validateManagedFixture(gateway.ManagedFiles, gateway.BaseURL, strings.TrimSpace(string(key)), *requireManaged || *requireStored)
 	if err != nil {
 		return err
 	}
@@ -351,6 +370,9 @@ func run(args []string, out io.Writer) error {
 	// Keep each SDK scenario in its own scheduling pool. Catalog steps deliberately
 	// share one case/pool so a rejected update must preserve its prior session.
 	scenarios := fixtureScenarios(managed != nil)
+	if *requireStored {
+		scenarios = appendStoredFixtureScenarios(scenarios)
+	}
 	groupIDs := make([]int64, 0, len(scenarios))
 	groupByScenario := map[string]int64{}
 	accountIDs := []int64{}
@@ -416,7 +438,7 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 		scenarioKeys[scenario] = a1.Path
-		if managed == nil || (!strings.Contains(scenario, "/managed-file-") && !strings.Contains(scenario, "/files-")) {
+		if managed == nil || (!strings.Contains(scenario, "/managed-file-") && !strings.Contains(scenario, "/files-") && !strings.Contains(scenario, "/stored-")) {
 			continue
 		}
 		roleKeys := map[string]fixtureRoleKey{"a1": a1}
@@ -442,6 +464,10 @@ func run(args []string, out io.Writer) error {
 	if managed != nil {
 		manifest["scenario_role_key_files"] = scenarioRoleFiles
 		manifest["managed_files"] = map[string]any{"contract": managed.Description.Contract, "json_profile": managed.Description.JSONProfile, "identity": managed.Description.Identity, "description_sha256": managed.DescriptionSHA256}
+	}
+	if *requireStored {
+		manifest["stored_responses"] = map[string]any{"contract": "local-responses/1", "identity": managed.Description.Identity,
+			"scope": "plain-text-local-storage", "preflight": "required-not-yet-accepted"}
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

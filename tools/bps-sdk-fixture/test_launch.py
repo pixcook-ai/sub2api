@@ -18,6 +18,32 @@ LAUNCHER = runpy.run_path(str(Path(__file__).with_name("launch.py")))
 
 
 class LauncherBoundaryTest(unittest.TestCase):
+    def test_restart_identity_is_bound_to_current_launcher_process(self):
+        identity = LAUNCHER.get("fixture_restart_identity")
+        self.assertIsNotNone(identity, "restart identity is not implemented")
+        first = identity("0123456789abcdef")
+        second = identity("0123456789abcdef")
+        self.assertEqual(set(first), {"version", "run_id", "launcher_pid", "process_identity", "control_token"})
+        self.assertEqual(first["version"], "bps-fixture-restart/1")
+        self.assertEqual(first["run_id"], "0123456789abcdef")
+        self.assertEqual(first["launcher_pid"], os.getpid())
+        self.assertIn("python", first["process_identity"].lower())
+        self.assertRegex(first["control_token"], r"^[a-f0-9]{64}$")
+        self.assertNotEqual(first["control_token"], second["control_token"])
+        self.assertEqual(first["process_identity"], second["process_identity"])
+
+    def test_stored_fixture_configuration_is_opt_in_and_requires_verified_control_plane(self):
+        configure = LAUNCHER.get("stored_response_fixture_options")
+        self.assertIsNotNone(configure, "stored fixture setup is not implemented")
+        self.assertEqual(configure(False, {}), {})
+        with self.assertRaisesRegex(ValueError, "stored responses.*verified"):
+            configure(True, {})
+        with self.assertRaisesRegex(ValueError, "stored responses.*verified"):
+            configure(True, {"managed_files": {"control_url": "http://127.0.0.1:8790"}})
+        gateway = {"managed_files": {"description": self.description()}}
+        self.assertEqual(configure(True, gateway), {"enabled": True})
+        self.assertEqual(gateway, {"managed_files": {"description": self.description()}})
+
     def description(self):
         return {"contract": "bps-files/1", "json_profile": "bps-files-json/1",
                 "backend_id": "fixture-test", "subject_fingerprint": "sha256:" + "1" * 64,

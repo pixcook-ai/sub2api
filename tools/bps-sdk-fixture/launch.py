@@ -299,6 +299,23 @@ def prepare_seed_gateway(gateway, data_dir):
     return verified, path
 
 
+def stored_response_fixture_options(required, gateway):
+    if not required:
+        return {}
+    if not gateway.get("managed_files", {}).get("description"):
+        raise ValueError("stored responses fixture requires a verified control plane")
+    return {"enabled": True}
+
+
+def fixture_restart_identity(run_id):
+    process_identity = command("env", "LC_ALL=C", "ps", "-p", os.getpid(), "-o", "lstart=,command=")
+    if not process_identity or len(process_identity) > 16384:
+        raise RuntimeError("cannot establish owned fixture process identity")
+    return {"version": "bps-fixture-restart/1", "run_id": run_id,
+            "launcher_pid": os.getpid(), "process_identity": process_identity,
+            "control_token": secrets.token_hex(32)}
+
+
 def build_gateway_fixture(repository, data_dir, snapshot):
     module = repository / "bps-local"
     binary = data_dir / "gateway-fixture"
@@ -369,6 +386,13 @@ def launch(args, gateway):
             gateway["gateway_binary_sha256"] = binary_digest(gateway_binary)
             gateway["gateway_source_files_sha256"] = gateway_source_hashes
         gateway, seed_gateway_input = prepare_seed_gateway(gateway, data_dir)
+        stored_options = stored_response_fixture_options(getattr(args, "require_stored_responses", False), gateway)
+        restart_identity = fixture_restart_identity(run_id)
+        marker_snapshot = data_dir / "fixture-marker-next.json"
+        private_write(marker_snapshot, {"contract_version": 1, "run_id": run_id,
+                                       "launcher_pid": os.getpid(),
+                                       "restart_control_token": restart_identity["control_token"]})
+        marker_snapshot.replace(data_dir / ".bps-sdk-fixture.json")
         main_source = source_state(repository)
         # Capture the exact harness and seed sources without rereading live files later.
         launcher_source = LAUNCHER_SOURCE
@@ -410,6 +434,8 @@ def launch(args, gateway):
             "pricing": {"remote_url": "", "hash_url": "", "data_dir": str(data_dir / "pricing"), "fallback_file": str(repository / "backend/resources/model-pricing/model_prices_and_context_window.json")},
             "gateway": {"files": {"enabled": True, "root": str(data_dir / "files"), "max_file_bytes": 209715200, "user_quota_bytes": 2147483648, "global_quota_bytes": 4294967296, "free_space_reserve_bytes": 1, "lease_seconds": 300}},
         }
+        if stored_options:
+            configuration["gateway"]["stored_responses"] = stored_options
         # JSON is valid YAML, so no additional configuration serializer is needed.
         private_write(data_dir / "config.yaml", configuration)
         environment = process_environment(data_dir)
@@ -430,7 +456,8 @@ def launch(args, gateway):
                                      "--gateway-manifest", str(seed_gateway_input),
                                      "--model", args.model, "--main-commit", commit,
                                      "--fixture-out", str(seed_manifest),
-                                     *(["--require-managed-files"] if args.require_managed_files else [])], env=environment,
+                                     *(["--require-managed-files"] if args.require_managed_files else []),
+                                     *(["--require-stored-responses"] if getattr(args, "require_stored_responses", False) else [])], env=environment,
                                     stdout=log, stderr=subprocess.STDOUT)
         if result.returncode:
             raise RuntimeError("fixture seed failed; inspect private seed.log")
@@ -443,7 +470,8 @@ def launch(args, gateway):
         wait_until("real main HTTP health (not scheduler acceptance)", lambda: healthy(server, main_port))
         restart_path = data_dir / "main-restart.json"
         restart_count = 0
-        private_write(restart_path, {"restart_count": restart_count, "main_pid": server.pid})
+        private_write(restart_path, {"restart_count": restart_count, "main_pid": server.pid,
+                                    "restart_identity": restart_identity})
         manifest = json.loads(seed_manifest.read_text())
         manifest.update({
             "main_tracked_dirty": main_tracked_dirty,
@@ -462,6 +490,7 @@ def launch(args, gateway):
             "container_images": {"postgres": args.postgres_image, "redis": args.redis_image},
             "launcher_pid": os.getpid(), "main_pid": server.pid,
             "main_restart_file": str(restart_path),
+            "restart_identity": restart_identity,
             "readiness": "http-health-only; SDK scheduling must still pass",
         })
         output_inode = private_write(output, manifest)
@@ -474,7 +503,8 @@ def launch(args, gateway):
                 wait_until("restarted real main HTTP health", lambda: healthy(server, main_port))
                 restart_count += 1
                 snapshot = data_dir / "main-restart-next.json"
-                private_write(snapshot, {"restart_count": restart_count, "previous_main_pid": old_pid, "main_pid": server.pid})
+                private_write(snapshot, {"restart_count": restart_count, "previous_main_pid": old_pid,
+                                         "main_pid": server.pid, "restart_identity": restart_identity})
                 snapshot.replace(restart_path)
                 restart_requested = False
             if server.poll() is not None:
@@ -528,7 +558,9 @@ def main():
     parser.add_argument("--keep-private-logs", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--require-managed-files", action="store_true")
+    parser.add_argument("--require-stored-responses", action="store_true")
     args = parser.parse_args()
+    args.require_managed_files = args.require_managed_files or args.require_stored_responses
     try:
         gateway = gateway_inputs(args.gateway_manifest, args.require_managed_files) if args.gateway_manifest else None
         if args.gateway_repo and not (Path(args.gateway_repo) / "scripts/sdk-conformance/fixture.py").is_file():
