@@ -73,7 +73,7 @@ func (c *ResponsesPreflightClient) Preflight(parent context.Context, owner, grou
 	if resp == nil || resp.Body == nil {
 		return empty, errors.New("responses preflight: invalid response")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (16<<10)+1))
 	if err != nil || len(raw) > 16<<10 {
 		return empty, errors.New("responses preflight: invalid response")

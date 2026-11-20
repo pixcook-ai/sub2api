@@ -18,7 +18,7 @@ func (r *fileRepository) LifecycleCandidates(ctx context.Context, after int64, l
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := make([]int64, 0, limit)
 	for rows.Next() {
 		var id int64
@@ -68,7 +68,7 @@ func (r *fileRepository) RetireExpired(ctx context.Context, id int64, drain time
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	f, err := r.lifecycleFile(ctx, tx, id)
 	if errors.Is(err, service.ErrFileNotFound) {
 		return false, nil
@@ -111,7 +111,7 @@ func (r *fileRepository) ClaimLocalPurge(ctx context.Context, id int64, token st
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	f, err := r.lifecycleFile(ctx, tx, id)
 	if err != nil {
 		return nil, err
@@ -145,7 +145,7 @@ func (r *fileRepository) ConfirmLocalPurge(ctx context.Context, t service.FilePu
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	f, err := r.lifecycleFile(ctx, tx, t.ID)
 	if err != nil {
 		return err

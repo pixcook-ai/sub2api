@@ -134,7 +134,7 @@ func stageManagedFileURLsWithFilesystem(ctx context.Context, sources []ManagedFi
 		}
 		mediaType, mediaErr := managedInlineMediaType(d.Filename, resp.Header.Get("Content-Type"))
 		if mediaErr != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, mediaErr
 		}
 		d.MIME = mediaType
@@ -142,26 +142,26 @@ func stageManagedFileURLsWithFilesystem(ctx context.Context, sources []ManagedFi
 			remaining = managedInlineImageMaxBytes
 		}
 		if resp.ContentLength > remaining {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, inlineReject("managed_file_limit", "input")
 		}
 		if stage.root == nil {
 			dir, err := fs.mkdirTemp(privateParent, "bps-url-*")
 			if err != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return nil, inlineStorageError(err)
 			}
 			stage.dir = dir
 			stage.root, err = fs.openRoot(dir)
 			if err != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return nil, inlineStorageError(err)
 			}
 		}
 		name := "blob-" + strconv.Itoa(i)
 		file, err := fs.create(stage.root, name)
 		if err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, inlineStorageError(err)
 		}
 		hash := sha256.New()
@@ -361,7 +361,7 @@ func getManagedFileURL(ctx context.Context, client *http.Client, target *url.URL
 		switch resp.StatusCode {
 		case 301, 302, 303, 307, 308:
 			location := resp.Header.Get("Location")
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if len(resp.Header.Values("Location")) != 1 {
 				return nil, inlineReject("invalid_file_url", "input")
 			}
@@ -382,7 +382,7 @@ func getManagedFileURL(ctx context.Context, client *http.Client, target *url.URL
 		default:
 			encoding := resp.Header.Get("Content-Encoding")
 			if resp.StatusCode != http.StatusOK || encoding != "" && !strings.EqualFold(encoding, "identity") || len(resp.Header.Values("Content-Type")) > 1 || len(resp.Header.Values("Content-Encoding")) > 1 || len(resp.Header.Values("Content-Range")) != 0 {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return nil, inlineReject("file_url_fetch_failed", "input")
 			}
 			return resp, nil

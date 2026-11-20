@@ -98,10 +98,6 @@ func (a *Account) AllowsOpenAIOAuthModelPolicy(model string) bool {
 	return isOpenAIOAuthServableModel(model)
 }
 
-func validateOpenAIAstraModelPolicy(account *Account, model string) error {
-	return nil
-}
-
 // CheckOpenAIAstraModelPolicy is kept for call sites. Probe verdicts are not a
 // model gate; servable GPT-family models, group allowlists, and retirement still apply.
 func (s *OpenAIGatewayService) CheckOpenAIAstraModelPolicy(ctx context.Context, account *Account, model string) error {
@@ -109,15 +105,3 @@ func (s *OpenAIGatewayService) CheckOpenAIAstraModelPolicy(ctx context.Context, 
 }
 
 // Catalog filtering must allow a model when another account can still serve it.
-func openAIAstraModelUnavailableForAccounts(accounts []Account, model string) bool {
-	blocked := false
-	for i := range accounts {
-		account := &accounts[i]
-		if account.IsOpenAIOAuth() && !account.AllowsOpenAIOAuthModelPolicy(model) {
-			blocked = true
-		} else if account.IsModelSupported(model) {
-			return false
-		}
-	}
-	return blocked
-}

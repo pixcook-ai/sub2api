@@ -24,7 +24,7 @@ func TestTiboQualityIsolationReadUsesNarrowAuthorityQuery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			repo := &accountRepository{sql: db}
 			mock.ExpectQuery(regexp.QuoteMeta(openAITiboQualityIsolationSQL)).WithArgs(int64(42)).
 				WillReturnRows(sqlmock.NewRows([]string{"isolated", "missing_parent"}).AddRow(tc.isolated, tc.missingParent))
@@ -43,7 +43,7 @@ func TestTiboQualityIsolationReadUsesNarrowAuthorityQuery(t *testing.T) {
 func TestTiboQualityIsolationAuthorityFailureDoesNotAssumeHealthy(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := &accountRepository{sql: db}
 	unavailable := errors.New("database unavailable")
 	mock.ExpectQuery(regexp.QuoteMeta(openAITiboQualityIsolationSQL)).WithArgs(int64(42)).WillReturnError(unavailable)

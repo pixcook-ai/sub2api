@@ -149,7 +149,7 @@ func TestManagedFileResolverBindsUploadedFileAndRechecksBeforeGeneration(t *test
 		calls.Add(1)
 		switch r.URL.Path {
 		case managedfiles.Prefix + "describe":
-			json.NewEncoder(w).Encode(bpsFilesTestDescription())
+			_ = json.NewEncoder(w).Encode(bpsFilesTestDescription())
 		case managedfiles.Prefix + "admit":
 			mr, e := r.MultipartReader()
 			require.NoError(t, e)
@@ -168,7 +168,7 @@ func TestManagedFileResolverBindsUploadedFileAndRechecksBeforeGeneration(t *test
 			require.Equal(t, "2", manifest.GroupRef)
 			hash, e := managedfiles.TemplateHash(manifest.RequestTemplate)
 			require.NoError(t, e)
-			json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-a", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: hash, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "staged"}}})
+			_ = json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-a", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: hash, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "staged"}}})
 		case managedfiles.Prefix + "ensure-uploaded":
 			require.Equal(t, []string{"file-a"}, ledger.started, "durable start precedes external upload")
 			var req managedfiles.EnsureRequest
@@ -179,20 +179,20 @@ func TestManagedFileResolverBindsUploadedFileAndRechecksBeforeGeneration(t *test
 			require.NoError(t, e)
 			result.WireSHA256 = bound.WireSHA256
 			result.BindingSHA256 = bound.BindingSHA256
-			json.NewEncoder(w).Encode(result)
+			_ = json.NewEncoder(w).Encode(result)
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(404)
 		}
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}],"metadata":{"large":9007199254740993}}`)
 	plan, e := resolver.Prepare(context.Background(), FileOwner{UserID: 1, GroupID: 2, APIKeyID: 3}, body)
 	require.NoError(t, e)
 	require.Zero(t, calls.Load())
-	defer plan.Close()
+	defer func() { _ = plan.Close() }()
 	account := managedSchedulerTestAccount(7, 2)
 	identity := bpsFilesTestIdentity()
 	account.Credentials["bps_files_control_url"] = server.URL
@@ -224,7 +224,7 @@ func TestManagedFileResolverUploadFailureStopsAndBecomesUncertain(t *testing.T) 
 		calls.Add(1)
 		switch r.URL.Path {
 		case managedfiles.Prefix + "describe":
-			json.NewEncoder(w).Encode(bpsFilesTestDescription())
+			_ = json.NewEncoder(w).Encode(bpsFilesTestDescription())
 		case managedfiles.Prefix + "admit":
 			mr, e := r.MultipartReader()
 			require.NoError(t, e)
@@ -238,7 +238,7 @@ func TestManagedFileResolverUploadFailureStopsAndBecomesUncertain(t *testing.T) 
 			require.NoError(t, e)
 			hash, e := managedfiles.TemplateHash(manifest.RequestTemplate)
 			require.NoError(t, e)
-			json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-failed", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: hash, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "staged"}}})
+			_ = json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-failed", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: hash, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "staged"}}})
 		case managedfiles.Prefix + "ensure-uploaded":
 			w.WriteHeader(502)
 		default:
@@ -246,13 +246,13 @@ func TestManagedFileResolverUploadFailureStopsAndBecomesUncertain(t *testing.T) 
 			w.WriteHeader(500)
 		}
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}]}`)
 	plan, e := resolver.Prepare(context.Background(), FileOwner{UserID: 1, GroupID: 2, APIKeyID: 3}, body)
 	require.NoError(t, e)
-	defer plan.Close()
+	defer func() { _ = plan.Close() }()
 	account := managedSchedulerTestAccount(7, 2)
 	identity := bpsFilesTestIdentity()
 	account.Credentials["bps_files_control_url"] = server.URL
@@ -279,7 +279,7 @@ func TestManagedFileResolverReusesConfirmedCopyWithoutEnsure(t *testing.T) {
 		calls.Add(1)
 		switch r.URL.Path {
 		case managedfiles.Prefix + "describe":
-			json.NewEncoder(w).Encode(bpsFilesTestDescription())
+			_ = json.NewEncoder(w).Encode(bpsFilesTestDescription())
 		case managedfiles.Prefix + "admit":
 			mr, e := r.MultipartReader()
 			require.NoError(t, e)
@@ -295,19 +295,19 @@ func TestManagedFileResolverReusesConfirmedCopyWithoutEnsure(t *testing.T) {
 			require.ErrorIs(t, e, io.EOF)
 			bound, e := managedfiles.Bind(manifest, nil)
 			require.NoError(t, e)
-			json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-existing", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: bound.TemplateSHA256, Ready: true, WireSHA256: bound.WireSHA256, BindingSHA256: bound.BindingSHA256, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "known"}}})
+			_ = json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-existing", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: bound.TemplateSHA256, Ready: true, WireSHA256: bound.WireSHA256, BindingSHA256: bound.BindingSHA256, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "known"}}})
 		default:
 			t.Errorf("unexpected upload %s", r.URL.Path)
 			w.WriteHeader(500)
 		}
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}]}`)
 	plan, e := resolver.Prepare(context.Background(), FileOwner{UserID: 1, GroupID: 2, APIKeyID: 3}, body)
 	require.NoError(t, e)
-	defer plan.Close()
+	defer func() { _ = plan.Close() }()
 	require.EqualValues(t, 7, plan.RequiredAccountID)
 	account := managedSchedulerTestAccount(7, 2)
 	identity := bpsFilesTestIdentity()
@@ -332,7 +332,7 @@ func TestManagedFileResolverPreservesFirstCopyWhenSecondUploadFails(t *testing.T
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case managedfiles.Prefix + "describe":
-			json.NewEncoder(w).Encode(bpsFilesTestDescription())
+			_ = json.NewEncoder(w).Encode(bpsFilesTestDescription())
 		case managedfiles.Prefix + "admit":
 			mr, e := r.MultipartReader()
 			require.NoError(t, e)
@@ -350,7 +350,7 @@ func TestManagedFileResolverPreservesFirstCopyWhenSecondUploadFails(t *testing.T
 			}
 			hash, e := managedfiles.TemplateHash(manifest.RequestTemplate)
 			require.NoError(t, e)
-			json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-two", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: hash, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "staged"}, {FileRef: "file-b", State: "staged"}}})
+			_ = json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-two", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: hash, Files: []managedfiles.AdmittedFile{{FileRef: "file-a", State: "staged"}, {FileRef: "file-b", State: "staged"}}})
 		case managedfiles.Prefix + "ensure-uploaded":
 			var req managedfiles.EnsureRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
@@ -361,19 +361,19 @@ func TestManagedFileResolverPreservesFirstCopyWhenSecondUploadFails(t *testing.T
 				return
 			}
 			f := manifest.Files[0]
-			json.NewEncoder(w).Encode(managedfiles.EnsureResult{Contract: managedfiles.Contract, Identity: bpsFilesTestIdentity(), OperationID: req.OperationID, FileRef: f.FileRef, RemoteID: "file-first", Bytes: f.Bytes, SHA256: f.SHA256, Filename: f.Filename, MIME: f.MIME, InputTokens: 17})
+			_ = json.NewEncoder(w).Encode(managedfiles.EnsureResult{Contract: managedfiles.Contract, Identity: bpsFilesTestIdentity(), OperationID: req.OperationID, FileRef: f.FileRef, RemoteID: "file-first", Bytes: f.Bytes, SHA256: f.SHA256, Filename: f.Filename, MIME: f.MIME, InputTokens: 17})
 		default:
 			t.Errorf("unexpected generation %s", r.URL.Path)
 			w.WriteHeader(500)
 		}
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"},{"type":"input_file","file_id":"file-b"}]}]}`)
 	plan, e := resolver.Prepare(context.Background(), FileOwner{UserID: 1, GroupID: 2, APIKeyID: 3}, body)
 	require.NoError(t, e)
-	defer plan.Close()
+	defer func() { _ = plan.Close() }()
 	account := managedSchedulerTestAccount(7, 2)
 	identity := bpsFilesTestIdentity()
 	account.Credentials["bps_files_control_url"] = server.URL
@@ -401,7 +401,7 @@ func TestManagedFileResolverRejectsRepeatedPositionBudgetBeforeOpening(t *testin
 	plan, err := resolver.Prepare(context.Background(), FileOwner{UserID: 1, GroupID: 2, APIKeyID: 3}, body)
 	require.Error(t, err)
 	if plan != nil {
-		defer plan.Close()
+		defer func() { _ = plan.Close() }()
 	}
 	require.Nil(t, plan)
 	opened, _ := repo.readActivity()

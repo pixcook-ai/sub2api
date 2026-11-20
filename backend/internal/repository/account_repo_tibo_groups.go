@@ -41,7 +41,7 @@ func (r *accountRepository) persistTiboProbeResult(ctx context.Context, id int64
 	}
 	verdict, at := service.LatestOpenAIAstraSample(updates[service.OpenAIAstraPolicyExtraKey])
 	if verdict != sample.Verdict || !at.Equal(sample.CompletedAt) {
-		return fmt.Errorf("Tibo probe sample does not match its observation")
+		return fmt.Errorf("tibo probe sample does not match its observation")
 	}
 	if sample.ProbeIdentity != "" {
 		var observation struct {
@@ -199,14 +199,14 @@ func moveTiboAccountGroup(ctx context.Context, client *dbent.Client, id int64, v
 	for rows.Next() {
 		var groupID int64
 		if err = rows.Scan(&groupID); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return 0, 0, false, "", err
 		}
 		hasSource = hasSource || groupID == from
 		hasTarget = hasTarget || groupID == to
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return 0, 0, false, "", err
 	}
@@ -246,7 +246,7 @@ func readTiboAutomationSettings(ctx context.Context, client *dbent.Client) (serv
 	if err != nil {
 		return service.DefaultOpenAITiboSettings(), err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return service.DefaultOpenAITiboSettings(), err
@@ -272,7 +272,7 @@ func lockTiboAutomationGroups(ctx context.Context, client *dbent.Client, setting
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	count := 0
 	for rows.Next() {
 		var id int64
@@ -352,7 +352,7 @@ func (r *accountRepository) PersistTiboObservation(ctx context.Context, id int64
 	}
 	observation, ok := updates[service.OpenAIAstraPolicyExtraKey]
 	if !ok {
-		return fmt.Errorf("Tibo observation missing history")
+		return fmt.Errorf("tibo observation missing history")
 	}
 	var value struct {
 		ProbeIdentity string `json:"probe_identity"`

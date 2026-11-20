@@ -946,21 +946,6 @@ func (s *OpenAIGatewayService) forceOpenAITiboDegraded(account *Account, route o
 	}
 }
 
-// openAICookieWSTurnModelMismatch is the Cookie WS passive check on a raw
-// upstream event (before any client-facing model rewrite): a successful
-// completion of an astra turn by another model means the caller retires this
-// socket. Only the exact Tibo probe payload is left to the probe observer.
-func (s *OpenAIGatewayService) openAICookieWSTurnModelMismatch(account *Account, sentModel string, payload []byte, eventType string) bool {
-	if !s.openAITiboRouteApplies(account) {
-		return false
-	}
-	model, success := openAICodexSuccessfulCompletionModel(payload, eventType)
-	if !success {
-		return false
-	}
-	return s.observeOpenAITiboResponseModel(account, openAITiboRouteCookieWS, sentModel, model)
-}
-
 func (s *OpenAIGatewayService) logOpenAITiboModelMismatch(accountID int64, route openAITiboRoute, sentModel, responseModel string, astra bool) {
 	every := 10 * time.Minute
 	if astra {

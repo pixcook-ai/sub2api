@@ -364,7 +364,7 @@ func (r *ManagedFileLedgerRepository) MarkUncertain(ctx context.Context, permit 
 	if e != nil {
 		return e
 	}
-	if len(code) == 0 || len(code) > 64 || strings.IndexFunc(code, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_') }) >= 0 {
+	if len(code) == 0 || len(code) > 64 || strings.IndexFunc(code, func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' }) >= 0 {
 		return service.ErrInvalidFile
 	}
 	tx, e := r.db.BeginTx(ctx, nil)

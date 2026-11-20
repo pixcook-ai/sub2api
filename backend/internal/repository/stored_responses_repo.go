@@ -63,7 +63,7 @@ func storedResponseIDValid(id string) bool {
 		return false
 	}
 	for _, c := range id[11:] {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}

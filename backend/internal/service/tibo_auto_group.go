@@ -12,7 +12,7 @@ import (
 // ErrOpenAITiboProbeIdentityChanged means the observation was not applied at
 // all. Callers must discard the old identity's in-memory sample and must not
 // advance persistence watermarks as if the repository had accepted it.
-var ErrOpenAITiboProbeIdentityChanged = errors.New("Tibo probe identity changed before persistence")
+var ErrOpenAITiboProbeIdentityChanged = errors.New("tibo probe identity changed before persistence")
 
 // TiboAutoGroupSample is issued only by a newly completed active Tibo probe.
 // StartedAt orders overlapping probes across processes; completion order must

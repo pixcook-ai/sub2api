@@ -6,10 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
-
-	dbent "github.com/Wei-Shaw/sub2api/ent"
 )
 
 // OpenAIOAuthRefreshSuccessRepository is a mandatory persistence boundary for
@@ -27,41 +24,6 @@ func isStoredOpenAIManagedOAuth(account *Account) bool {
 }
 
 type openAIManualRefreshContextKey struct{}
-
-func isOpenAIManualRefresh(ctx context.Context, account *Account) bool {
-	manual, _ := ctx.Value(openAIManualRefreshContextKey{}).(bool)
-	return manual && account != nil && account.IsOpenAIOAuth()
-}
-
-// Hold both local and distributed locks through an enclosing scoped-admin
-// transaction. Its row still contains the old token until commit; an early
-// unlock would let another worker consume the rotated refresh token again.
-func releaseOpenAIRefreshLocksAfterTransaction(ctx context.Context, account *Account, release func()) {
-	if account == nil || !account.IsOpenAIOAuth() {
-		release()
-		return
-	}
-	tx := dbent.TxFromContext(ctx)
-	if tx == nil {
-		release()
-		return
-	}
-	var once sync.Once
-	tx.OnCommit(func(next dbent.Committer) dbent.Committer {
-		return dbent.CommitFunc(func(commitCtx context.Context, tx *dbent.Tx) error {
-			err := next.Commit(commitCtx, tx)
-			once.Do(release)
-			return err
-		})
-	})
-	tx.OnRollback(func(next dbent.Rollbacker) dbent.Rollbacker {
-		return dbent.RollbackFunc(func(rollbackCtx context.Context, tx *dbent.Tx) error {
-			err := next.Rollback(rollbackCtx, tx)
-			once.Do(release)
-			return err
-		})
-	})
-}
 
 func openAIRefreshPersistenceUnavailable(cause error) error {
 	return &providerCycleContainmentRefreshError{err: &oauthRefreshStateUnavailableError{err: cause}}

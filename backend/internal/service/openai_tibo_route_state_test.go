@@ -237,7 +237,7 @@ func TestTiboRecentSamplesKeepLastTwentyFour(t *testing.T) {
 			}
 
 			tc := newTiboRouteCase(t, false, false)
-			tc.svc.persistOpenAITiboVerdict(tc.account.ID, openAITiboRouteHTTP, openAITiboVerdictRecordFor(&r), r.recent)
+			require.NoError(t, tc.svc.persistOpenAITiboVerdict(tc.account.ID, openAITiboRouteHTTP, openAITiboVerdictRecordFor(&r), r.recent))
 			repo := tc.svc.accountRepo.(*tiboAccountRepo)
 			stored, err := repo.GetByID(context.Background(), tc.account.ID)
 			require.NoError(t, err)

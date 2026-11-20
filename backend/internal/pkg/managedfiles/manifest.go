@@ -155,7 +155,7 @@ func ValidRemoteID(id string) bool {
 		return false
 	}
 	for _, b := range []byte(id[5:]) {
-		if !(b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' || b == '_') {
+		if (b < 'a' || b > 'z') && (b < 'A' || b > 'Z') && (b < '0' || b > '9') && b != '-' && b != '_' {
 			return false
 		}
 	}
@@ -202,7 +202,7 @@ func manifestTemplate(m AdmitManifest) (map[string]any, error) {
 		}
 		kind, _ := object["type"].(string)
 		_, role := object["role"].(string)
-		if kind != "message" && !(kind == "" && role) {
+		if kind != "message" && (kind != "" || !role) {
 			if kind == "input_file" || kind == "input_image" {
 				return nil, reject("unsupported_managed_input", fmt.Sprintf("request_template.input[%d]", i))
 			}
@@ -322,14 +322,29 @@ func ReplacedWire(m AdmitManifest, remoteIDs map[string]string) ([]byte, error) 
 	if len(remoteIDs) != len(m.Files) {
 		return nil, reject("invalid_managed_binding", "files")
 	}
-	input := root["input"].([]any)
+	input, ok := root["input"].([]any)
+	if !ok {
+		return nil, reject("invalid_managed_json", "input")
+	}
 	for _, file := range m.Files {
 		remote := remoteIDs[file.FileRef]
 		if !ValidRemoteID(remote) || file.Mode == "existing" && remote != file.RemoteID {
 			return nil, reject("invalid_managed_binding", "files")
 		}
 		for _, pos := range file.Positions {
-			input[pos.Input].(map[string]any)["content"].([]any)[pos.Part].(map[string]any)["file_id"] = remote
+			if pos.Input < 0 || pos.Input >= len(input) {
+				return nil, reject("invalid_managed_position", "files")
+			}
+			item, _ := input[pos.Input].(map[string]any)
+			content, _ := item["content"].([]any)
+			if pos.Part < 0 || pos.Part >= len(content) {
+				return nil, reject("invalid_managed_position", "files")
+			}
+			part, _ := content[pos.Part].(map[string]any)
+			if part == nil {
+				return nil, reject("invalid_managed_position", "files")
+			}
+			part["file_id"] = remote
 		}
 	}
 	result, err := json.Marshal(root)

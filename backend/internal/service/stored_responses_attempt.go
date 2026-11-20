@@ -120,7 +120,7 @@ func storedResponsePayloadWithObservedUsage(ctx context.Context, raw []byte, pat
 	if attempt == nil {
 		return raw
 	}
-	var merged any = attempt.capture.observedUsage
+	var merged = attempt.capture.observedUsage
 	if safe := safeOpenAIFailureUsage(gjson.GetBytes(raw, path)); safe != nil {
 		merged = mergeStoredResponseUsage(merged, safe)
 	}

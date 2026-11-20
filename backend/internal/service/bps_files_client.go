@@ -93,7 +93,7 @@ func (b *BPSFilesBackend) execute(req *http.Request, out any, upload bool) error
 	if resp == nil || resp.Body == nil {
 		return &BPSFilesBackendError{Code: "invalid_response", OutcomeUnknown: upload}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	fail := func(code string) error {
 		return &BPSFilesBackendError{Code: code, HTTPStatus: resp.StatusCode, OutcomeUnknown: upload}
 	}
@@ -369,7 +369,7 @@ func bpsFilesDigest(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}

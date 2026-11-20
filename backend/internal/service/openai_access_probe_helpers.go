@@ -70,10 +70,7 @@ func intelligentResponsesTerminalSuccessful(event map[string]any) bool {
 		return false
 	}
 	response, _ := event["response"].(map[string]any)
-	if response["error"] != nil {
-		return false
-	}
-	return true
+	return response["error"] == nil
 }
 
 func intelligentResponsesTerminalText(event map[string]any) (string, bool) {
@@ -89,7 +86,7 @@ func intelligentResponsesTerminalText(event map[string]any) (string, bool) {
 		for _, value := range content {
 			part, _ := value.(map[string]any)
 			if part["type"] == "output_text" {
-				_, _ = text.WriteString(fmt.Sprint(part["text"]))
+				_, _ = fmt.Fprint(&text, part["text"])
 			}
 		}
 	}
@@ -170,7 +167,7 @@ func readOpenAIAccountTestStream(body io.Reader, onDelta func(string)) (string, 
 		if line != "" && sseDataPrefix.MatchString(line) {
 			jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 			if jsonStr == "[DONE]" {
-				return "", errors.New("Stream ended before response.completed")
+				return "", errors.New("stream ended before response.completed")
 			}
 			var data map[string]any
 			if json.Unmarshal([]byte(jsonStr), &data) == nil {
@@ -212,9 +209,9 @@ func readOpenAIAccountTestStream(body io.Reader, onDelta func(string)) (string, 
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
-				return "", errors.New("Stream ended before response.completed")
+				return "", errors.New("stream ended before response.completed")
 			}
-			return "", fmt.Errorf("Stream read error: %w", readErr)
+			return "", fmt.Errorf("stream read error: %w", readErr)
 		}
 	}
 }

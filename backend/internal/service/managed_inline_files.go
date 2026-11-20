@@ -140,7 +140,7 @@ func PreflightManagedInlineFiles(ctx context.Context, body []byte, limits Manage
 		kind, _ := item["type"].(string)
 		_, hasType := item["type"]
 		_, hasRole := item["role"].(string)
-		if kind != "message" && !(!hasType && hasRole) {
+		if kind != "message" && (hasType || !hasRole) {
 			if managedInlineInItem(item) {
 				return nil, inlineReject("unsupported_inline_container", "input")
 			}

@@ -33,7 +33,7 @@ func TestManagedForwardAuthorizesOriginalPublicModelBeforeDescribe(t *testing.T)
 			body := []byte(`{"model":"gpt-route","store":false,"input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}]}`)
 			plan, err := resolver.Prepare(ctx, FileOwner{UserID: 1, APIKeyID: 3, GroupID: 2}, body)
 			require.NoError(t, err)
-			defer plan.Close()
+			defer func() { _ = plan.Close() }()
 			svc.managedFiles = resolver
 			ctx = WithManagedFilePlan(ctx, plan)
 			c := newOpenAIRejectedFieldTestContext(body)
@@ -75,7 +75,7 @@ func TestManagedForwardRechecksFreshAccountBeforeDescribe(t *testing.T) {
 			body := []byte(`{"model":"gpt-route","store":false,"input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}]}`)
 			plan, err := resolver.Prepare(ctx, FileOwner{UserID: 1, APIKeyID: 3, GroupID: groups.group.ID}, body)
 			require.NoError(t, err)
-			defer plan.Close()
+			defer func() { _ = plan.Close() }()
 			svc.managedFiles = resolver
 			ctx = WithManagedFilePlan(ctx, plan)
 			c := newOpenAIRejectedFieldTestContext(body)

@@ -18,19 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func tiboRouteStatusResponse(status int) *http.Response {
-	return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"denied"}}`))}
-}
-
-type tiboZeroDialer struct{}
-
-func (tiboZeroDialer) DialCount() int { return 0 }
-
 type tiboRouteCase struct {
 	svc      *OpenAIGatewayService
 	account  *Account
 	upstream *httpUpstreamRecorder
-	dialer   tiboZeroDialer
 }
 
 // tiboAccountRepo is a fake database row. Like the real repository it owns
@@ -155,14 +146,6 @@ func (tc *tiboRouteCase) forward(t *testing.T) (*OpenAIForwardResult, *httptest.
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	return result, rec, c
-}
-
-func (tc *tiboRouteCase) hosts() []string {
-	hosts := make([]string, 0, len(tc.upstream.requests))
-	for _, req := range tc.upstream.requests {
-		hosts = append(hosts, req.URL.Host)
-	}
-	return hosts
 }
 
 func requireTiboProbe(t *testing.T, body []byte) {

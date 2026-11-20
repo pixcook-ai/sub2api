@@ -133,7 +133,7 @@ func TestPrivateFileBlobStoreDoesNotOverwriteCommittedBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	content, err := io.ReadAll(reader)
 	if err != nil || string(content) != "original" {
 		t.Fatalf("committed bytes changed: %q, %v", content, err)

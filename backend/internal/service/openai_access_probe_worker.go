@@ -140,12 +140,12 @@ func isOpenAIRefreshProbeAccount(account *Account, failure *openAIRefreshRejecti
 		account.GetOpenAIAccessToken() == "" || failure.credentials != openAIRefreshFingerprint(account) {
 		return false
 	}
-	if !account.IsActive() && !(account.Status == StatusError && account.ErrorMessage == nonRetryableTokenRefreshMessage(failure.err)) {
+	if !account.IsActive() && (account.Status != StatusError || account.ErrorMessage != nonRetryableTokenRefreshMessage(failure.err)) {
 		return false
 	}
 	now := time.Now()
 	expiry := openAIAccessTokenExpiresAt(account)
-	return expiry != nil && now.Before(*expiry) && !(account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt))
+	return expiry != nil && now.Before(*expiry) && (!account.AutoPauseOnExpired || account.ExpiresAt == nil || now.Before(*account.ExpiresAt))
 }
 
 // A cooling account retains a single deferred job. Only the exact refresh

@@ -8,10 +8,6 @@ import (
 
 // Diagnostics stay on HTTP to measure that route, but share the normal
 // OAuth outbound transport with business traffic.
-type openAICodexProbeSender interface {
-	doOpenAICodexProbe(*http.Request, string, *Account) (*http.Response, error)
-}
-
 type codexProbePreparedKey struct{}
 
 func (s *OpenAIGatewayService) doOpenAICodexProbe(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {

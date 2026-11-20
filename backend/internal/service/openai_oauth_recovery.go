@@ -52,10 +52,6 @@ func openAIAccessTokenExpiresAt(account *Account) *time.Time {
 	return account.GetCredentialAsTime("expires_at")
 }
 
-func (s *OpenAIGatewayService) openAIOAuthCredentialOwner(ctx context.Context, account *Account) (*Account, error) {
-	return account, nil
-}
-
 type openAIRefreshRejection struct {
 	credentials         [sha256.Size]byte
 	err                 *openai.RefreshTokenError
@@ -138,10 +134,6 @@ func sameOpenAIAccessProbeSnapshot(sent, latest *Account) bool {
 // Keep the refresh rejection even when a completed inference proves this access
 // token still works. The proof belongs to the failure observed before sending
 // the test, so a newer 401 or a credential replacement wins over a late success.
-func (api *OAuthRefreshAPI) verifyOpenAIAccessAfterTest(ctx context.Context, account *Account, before *openAIRefreshRejection, sentAuthorization string, afterVerify func()) bool {
-	return api.verifyOpenAIAccess(ctx, account, before, sentAuthorization, false, afterVerify) == openAIAccessProbeVerified
-}
-
 func (api *OAuthRefreshAPI) verifyOpenAIAccess(ctx context.Context, account *Account, before *openAIRefreshRejection, sentAuthorization string, automatic bool, afterVerify func()) openAIAccessProbeOutcome {
 	if api == nil || api.accountRepo == nil || before == nil || !canRecoverOpenAIOAuth(account) ||
 		!sentOpenAIAccessTokenMatches(account, sentAuthorization) ||
@@ -209,10 +201,6 @@ func (api *OAuthRefreshAPI) verifyOpenAIAccess(ctx context.Context, account *Acc
 
 // A Responses 401 invalidates both active proof and an older probe in flight.
 // Replace the immutable snapshot even if no proof has completed yet.
-func (api *OAuthRefreshAPI) rejectVerifiedOpenAIAccess(account *Account, sentAuthorization string) {
-	api.rejectOpenAIAccess(context.Background(), account, sentAuthorization, false)
-}
-
 func (api *OAuthRefreshAPI) rejectOpenAIAccess(ctx context.Context, account *Account, sentAuthorization string, fromProbe bool) openAIAccessProbeOutcome {
 	if api.openAIRejectionForAccount(account) == nil || !sentOpenAIAccessTokenMatches(account, sentAuthorization) {
 		return openAIAccessProbeSkipped

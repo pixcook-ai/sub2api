@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	OpenAICredentialReasonReauthRequired     GatewayFailureReason = "openai_oauth_reauth_required"
-	OpenAICredentialUnavailableClientMessage                      = "No healthy OpenAI OAuth account is currently available"
+	OpenAICredentialReasonReauthRequired     = "openai_oauth_reauth_required"
+	OpenAICredentialUnavailableClientMessage = "No healthy OpenAI OAuth account is currently available"
 )
 
 // Credential acquisition precedes inference. A rejected refresh token must

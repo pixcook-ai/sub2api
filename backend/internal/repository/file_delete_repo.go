@@ -16,7 +16,7 @@ func (r *fileRepository) DeleteLocalFile(ctx context.Context, owner service.File
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// The same file-row lock fences Reserve/Start/Complete and read leases.
 	// Never select only visible rows: an owned deletion tombstone is idempotent.
 	f, err := scanStoredFile(tx.QueryRowContext(ctx, `SELECT `+fileColumns+` FROM gateway_files

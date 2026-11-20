@@ -97,9 +97,9 @@ func TestRecoveryMissingRejectsUntrustedEvidence(t *testing.T) {
 	if err := json.Unmarshal([]byte(good), &object); err != nil {
 		t.Fatal(err)
 	}
-	failure := object["error"].(map[string]any)
-	recovery := failure["recovery"].(map[string]any)
-	identity := recovery["identity"].(map[string]any)
+	failure, _ := object["error"].(map[string]any)
+	recovery, _ := failure["recovery"].(map[string]any)
+	identity, _ := recovery["identity"].(map[string]any)
 	for _, group := range []map[string]any{object, failure, recovery, identity} {
 		keys := make([]string, 0, len(group))
 		for key := range group {

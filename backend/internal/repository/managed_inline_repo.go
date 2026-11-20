@@ -223,7 +223,7 @@ func (r *ManagedFileLedgerRepository) CompleteInline(ctx context.Context, p *ser
 }
 
 func (r *ManagedFileLedgerRepository) MarkInlineUncertain(ctx context.Context, p *service.ManagedInlineReservation, ref, code string) error {
-	if len(code) == 0 || len(code) > 64 || strings.IndexFunc(code, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_') }) >= 0 {
+	if len(code) == 0 || len(code) > 64 || strings.IndexFunc(code, func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' }) >= 0 {
 		return service.ErrInvalidFile
 	}
 	tx, err := r.db.BeginTx(ctx, nil)

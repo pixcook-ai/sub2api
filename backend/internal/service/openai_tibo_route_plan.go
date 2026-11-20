@@ -24,13 +24,6 @@ type openAITiboRun struct {
 	cfg          openAITiboSettings
 }
 
-func (r *openAITiboRun) first() openAITiboRoute {
-	if r == nil || len(r.routes) == 0 {
-		return openAITiboRouteHTTP
-	}
-	return r.routes[0]
-}
-
 func (r *openAITiboRun) tier(route openAITiboRoute) openAITiboVerdict {
 	if r == nil {
 		return openAITiboUnknown
@@ -39,13 +32,6 @@ func (r *openAITiboRun) tier(route openAITiboRoute) openAITiboVerdict {
 		return verdict
 	}
 	return openAITiboUnknown
-}
-
-// advance drops the first route after a failure that did not execute there.
-func (r *openAITiboRun) advance() {
-	if r != nil && len(r.routes) > 1 {
-		r.routes = r.routes[1:]
-	}
 }
 
 // commit records the route about to serve. Degraded HTTP (every route

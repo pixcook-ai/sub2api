@@ -35,7 +35,7 @@ func TestRequestBodyAbsoluteDeadlineBoundsFirstMultipartBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, err = io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 1024\r\nContent-Type: multipart/form-data; boundary=files\r\n\r\n")
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestRequestBodyAbsoluteDeadlineBoundsContinuousDrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, err = io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 1048576\r\n\r\nx")
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestRequestBodyAbsoluteDeadlineBoundsContinuousDrip(t *testing.T) {
 			}
 		}
 	}()
-	defer func() { close(stopDrip); conn.Close(); <-dripDone }()
+	defer func() { close(stopDrip); _ = conn.Close(); <-dripDone }()
 	select {
 	case err := <-done:
 		var timeout net.Error
@@ -134,7 +134,7 @@ func TestRequestBodyCancellationInterruptsRead(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			_, err = io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 1024\r\n\r\nx")
 			if err != nil {
 				t.Fatal(err)
@@ -179,7 +179,7 @@ func TestRequestBodyAbsoluteDeadlineBoundsHTTP1ImplicitDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, err = io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 1024\r\n\r\nx")
 	if err != nil {
 		t.Fatal(err)
@@ -231,10 +231,10 @@ func TestRequestBodyDeadlineHTTP2KeepsOtherStreams(t *testing.T) {
 				defer close(clientDone)
 				resp, err := srv.Client().Do(slow)
 				if err == nil {
-					resp.Body.Close()
+					_ = resp.Body.Close()
 				}
 			}()
-			defer func() { cancel(); writer.Close(); reader.Close(); <-clientDone }()
+			defer func() { cancel(); _ = writer.Close(); _ = reader.Close(); <-clientDone }()
 			var interrupt context.CancelFunc
 			select {
 			case interrupt = <-ready:
@@ -256,7 +256,7 @@ func TestRequestBodyDeadlineHTTP2KeepsOtherStreams(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				if resp.ProtoMajor != 2 || resp.StatusCode != http.StatusNoContent || usedConn != uploadConn {
 					t.Fatalf("other stream failed on same connection: proto=%s status=%d same_conn=%v", resp.Proto, resp.StatusCode, usedConn == uploadConn)
 				}
@@ -312,7 +312,7 @@ func TestRequestBodyAbsoluteDeadlineBoundsTrailingMultipartField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	body := "--files\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sample.txt\"\r\n\r\nx\r\n--files\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nuser_data"
 	_, err = fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 1024\r\nContent-Type: multipart/form-data; boundary=files\r\n\r\n%s", body)
 	if err != nil {

@@ -47,7 +47,7 @@ func privateFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	opened, err := f.Stat()
 	if err != nil || !opened.Mode().IsRegular() || opened.Mode().Perm()&0077 != 0 || !os.SameFile(info, opened) {
 		return nil, errors.New("private file changed during open")
@@ -63,7 +63,7 @@ func writePrivate(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = f.Write(data)
 	return err
 }
@@ -484,7 +484,7 @@ func run(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	ctx := context.Background()
 	for _, table := range []string{"users", "accounts", "api_keys"} {
 		var count int

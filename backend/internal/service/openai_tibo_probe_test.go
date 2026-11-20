@@ -170,8 +170,8 @@ func TestTiboSyntheticProbeQualityIsolationMarkerIsPrivateAndAccountBound(t *tes
 	require.True(t, isOpenAITiboSyntheticProbe(ctx, account))
 	require.False(t, isOpenAITiboSyntheticProbe(ctx, &Account{ID: 78, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}))
 	require.False(t, isOpenAITiboSyntheticProbe(context.Background(), account))
-	require.False(t, isOpenAITiboSyntheticProbe(context.WithValue(context.Background(), "tibo_probe", true), account))
-	require.False(t, isOpenAITiboSyntheticProbe(nil, account))
+	require.False(t, isOpenAITiboSyntheticProbe(context.WithValue(context.Background(), struct{ name string }{"tibo_probe"}, true), account))
+	require.False(t, isOpenAITiboSyntheticProbe(context.TODO(), account))
 }
 
 // The production sender is exercised through an actual local HTTP server; this

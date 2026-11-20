@@ -457,7 +457,9 @@ func TestStoredResponseCommitFailureRetainsObservedTerminalUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var saved map[string]any
-	json.Unmarshal(db.terminal.PublicResponse, &saved)
+	if err := json.Unmarshal(db.terminal.PublicResponse, &saved); err != nil {
+		t.Fatal(err)
+	}
 	if saved["usage"] == nil {
 		t.Fatal("observed usage was lost on storage failure")
 	}

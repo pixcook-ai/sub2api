@@ -59,7 +59,7 @@ func TestBPSFilesBackendDescribeAuthenticatesAndChecksIdentity(t *testing.T) {
 		require.Empty(t, r.Header.Get("Idempotency-Key"))
 		require.NoError(t, json.NewEncoder(w).Encode(bpsFilesTestDescription()))
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	transport := &bpsFilesTestTransport{client: server.Client()}
 	got, err := bpsFilesTestBackend(t, server.URL, transport).Describe(context.Background())
 	require.NoError(t, err)
@@ -95,9 +95,9 @@ func TestBPSFilesBackendAdmitStreamsAndValidatesTemplate(t *testing.T) {
 		require.Equal(t, payload, string(got))
 		_, err = multipart.NextPart()
 		require.ErrorIs(t, err, io.EOF)
-		json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: identity, AdmissionID: "admission-1", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: templateHash, Files: []managedfiles.AdmittedFile{{FileRef: "file-public", State: "staged"}}})
+		_ = json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: identity, AdmissionID: "admission-1", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: templateHash, Files: []managedfiles.AdmittedFile{{FileRef: "file-public", State: "staged"}}})
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	transport := &bpsFilesTestTransport{client: server.Client()}
 	result, err := bpsFilesTestBackend(t, server.URL, transport).Admit(context.Background(), manifest, map[string]io.Reader{"file-public": strings.NewReader(payload)})
 	require.NoError(t, err)
@@ -114,9 +114,9 @@ func TestBPSFilesBackendEnsureChecksUploadedCopy(t *testing.T) {
 		var got managedfiles.EnsureRequest
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
 		require.Equal(t, request, got)
-		json.NewEncoder(w).Encode(managedfiles.EnsureResult{Contract: managedfiles.Contract, Identity: bpsFilesTestIdentity(), OperationID: request.OperationID, FileRef: file.FileRef, RemoteID: "file-remote", Bytes: file.Bytes, SHA256: file.SHA256, Filename: file.Filename, MIME: file.MIME, InputTokens: 17})
+		_ = json.NewEncoder(w).Encode(managedfiles.EnsureResult{Contract: managedfiles.Contract, Identity: bpsFilesTestIdentity(), OperationID: request.OperationID, FileRef: file.FileRef, RemoteID: "file-remote", Bytes: file.Bytes, SHA256: file.SHA256, Filename: file.Filename, MIME: file.MIME, InputTokens: 17})
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	transport := &bpsFilesTestTransport{client: server.Client()}
 	result, err := bpsFilesTestBackend(t, server.URL, transport).EnsureUploaded(context.Background(), request, file)
 	require.NoError(t, err)
@@ -139,8 +139,11 @@ func TestBPSFilesBackendRejectsUntrustedDescriptionAndNeverRetries(t *testing.T)
 		{"server failure", `secret-token /private/secret`, 503},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); io.WriteString(w, tc.body) }))
-			defer server.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer func() { _ = server.Close() }()
 			transport := &bpsFilesTestTransport{client: server.Client()}
 			_, err := bpsFilesTestBackend(t, server.URL, transport).Describe(context.Background())
 			require.Error(t, err)
@@ -152,11 +155,11 @@ func TestBPSFilesBackendRejectsUntrustedDescriptionAndNeverRetries(t *testing.T)
 func TestBPSFilesBackendRedirectAndCancelledContextDoNotSendCredentialsAgain(t *testing.T) {
 	var redirected int
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected++ }))
-	defer target.Close()
+	defer func() { _ = target.Close() }()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 	transport := &bpsFilesTestTransport{client: source.Client()}
 	backend := bpsFilesTestBackend(t, source.URL, transport)
 	_, err := backend.Describe(context.Background())
@@ -173,9 +176,9 @@ func TestBPSFilesBackendEnsureInvalidResultIsUnknownAndNotRetried(t *testing.T) 
 	file := managedfiles.File{FileRef: "file-public", Mode: "upload", Filename: "test.txt", MIME: "text/plain", Bytes: 5, SHA256: strings.Repeat("b", 64)}
 	request := managedfiles.EnsureRequest{Contract: managedfiles.Contract, Expected: bpsFilesTestIdentity(), AdmissionID: "admission-1", FileRef: file.FileRef, OperationID: "operation-1"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(managedfiles.EnsureResult{Contract: managedfiles.Contract, Identity: bpsFilesTestIdentity(), OperationID: "wrong-operation", FileRef: file.FileRef, RemoteID: "file-remote", Bytes: 5, SHA256: file.SHA256, Filename: file.Filename, MIME: file.MIME})
+		_ = json.NewEncoder(w).Encode(managedfiles.EnsureResult{Contract: managedfiles.Contract, Identity: bpsFilesTestIdentity(), OperationID: "wrong-operation", FileRef: file.FileRef, RemoteID: "file-remote", Bytes: 5, SHA256: file.SHA256, Filename: file.Filename, MIME: file.MIME})
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	transport := &bpsFilesTestTransport{client: server.Client()}
 	_, err := bpsFilesTestBackend(t, server.URL, transport).EnsureUploaded(context.Background(), request, file)
 	var typed *BPSFilesBackendError
@@ -228,9 +231,9 @@ func TestBPSFilesBackendAdmitStreamsLargeFileAndPreservesHash(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, size, n)
 		require.Equal(t, file.SHA256, hex.EncodeToString(observed.Sum(nil)))
-		json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-large", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: templateHash, Files: []managedfiles.AdmittedFile{{FileRef: file.FileRef, State: "staged"}}})
+		_ = json.NewEncoder(w).Encode(managedfiles.AdmitResult{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, Identity: bpsFilesTestIdentity(), AdmissionID: "admission-large", ExpiresAt: time.Now().Add(time.Minute).Unix(), TemplateSHA256: templateHash, Files: []managedfiles.AdmittedFile{{FileRef: file.FileRef, State: "staged"}}})
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	source := &bpsFilesPatternReader{remaining: size}
 	transport := &bpsFilesTestTransport{client: server.Client()}
 	_, err = bpsFilesTestBackend(t, server.URL, transport).Admit(context.Background(), manifest, map[string]io.Reader{file.FileRef: source})
@@ -252,9 +255,9 @@ func TestBPSFilesBackendRejectsUnsafeConfigBeforeAnyRequest(t *testing.T) {
 func TestBPSFilesBackendControlPrefixIsOperatorConfigured(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/control/internal/bps-files/v1/describe", r.URL.Path)
-		json.NewEncoder(w).Encode(bpsFilesTestDescription())
+		_ = json.NewEncoder(w).Encode(bpsFilesTestDescription())
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	transport := &bpsFilesTestTransport{client: server.Client()}
 	_, err := bpsFilesTestBackend(t, server.URL+"/control/", transport).Describe(context.Background())
 	require.NoError(t, err)
@@ -270,7 +273,7 @@ func TestBPSFilesBackendEnsureTransportFailureDoesNotLeakOrRetry(t *testing.T) {
 		require.NoError(t, err)
 		connection.Close()
 	}))
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	transport := &bpsFilesTestTransport{client: server.Client()}
 	_, err := bpsFilesTestBackend(t, server.URL, transport).EnsureUploaded(context.Background(), request, file)
 	var typed *BPSFilesBackendError

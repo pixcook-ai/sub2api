@@ -160,7 +160,7 @@ func (r *fileRepository) AcquireReadGrant(ctx context.Context, userID, groupID i
 	if err != nil {
 		return nil, grant, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	file, err := scanStoredFile(tx.QueryRowContext(ctx, `SELECT `+fileColumns+` FROM gateway_files
  WHERE public_id=$1 AND user_id=$2 AND group_id=$3 AND state='ready' FOR UPDATE`, publicID, userID, groupID))
 	if err != nil {
@@ -211,7 +211,7 @@ func (r *fileRepository) RenewReadGrant(ctx context.Context, id int64, token str
 	if err != nil {
 		return grant, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	file, err := scanStoredFile(tx.QueryRowContext(ctx, `SELECT `+fileColumns+` FROM gateway_files WHERE id=$1 FOR UPDATE`, id))
 	if errors.Is(err, service.ErrFileNotFound) {
 		return grant, service.ErrFileLeaseConflict

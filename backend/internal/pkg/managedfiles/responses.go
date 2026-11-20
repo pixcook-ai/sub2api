@@ -69,7 +69,7 @@ func decodeResponsesPolicyError(status int, raw []byte) *ResponsesPreflightError
 	if !ok || !responsesStringFields(fields, "type", "code", "param", "message") || fields["type"] != "invalid_request_error" || fields["message"] != responsesPolicyMessage {
 		return nil
 	}
-	code := fields["code"].(string)
+	code, _ := fields["code"].(string)
 	switch code {
 	case "unsupported_parameter", "unsupported_tool", "unsupported_tool_choice", "invalid_parameter":
 	default:
@@ -80,7 +80,7 @@ func decodeResponsesPolicyError(status int, raw []byte) *ResponsesPreflightError
 		return nil
 	}
 	for _, c := range param {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '[' || c == ']') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '.' && c != '[' && c != ']' {
 			return nil
 		}
 	}

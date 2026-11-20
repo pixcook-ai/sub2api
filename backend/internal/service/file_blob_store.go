@@ -49,11 +49,13 @@ func NewPrivateFileBlobStore(root string, reserveBytes int64) (*PrivateFileBlobS
 	if root == string(filepath.Separator) {
 		return nil, errors.New("private file storage cannot use the filesystem root")
 	}
+	//nolint:gosec // G703: root is an operator-configured storage directory, not request input.
 	if info, err := os.Lstat(root); err == nil && !info.IsDir() {
 		return nil, ErrUnsafeFileBlobPath
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fileBlobError(err)
 	}
+	//nolint:gosec // G703: operator-configured root; subsequent opens use no-follow directory descriptors.
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fileBlobError(err)
 	}
@@ -69,7 +71,7 @@ func NewPrivateFileBlobStore(root string, reserveBytes int64) (*PrivateFileBlobS
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(rootFD)
+	defer func() { _ = unix.Close(rootFD) }()
 	store.rootID, err = privateFileBlobDirectoryID(rootFD)
 	if err != nil {
 		return nil, err
@@ -121,7 +123,7 @@ func (s *PrivateFileBlobStore) Stage(ctx context.Context, key string, src io.Rea
 	if err != nil {
 		return 0, "", err
 	}
-	defer unix.Close(rootFD)
+	defer func() { _ = unix.Close(rootFD) }()
 	blobsFD, err := s.openDirectory(rootFD, "blobs")
 	if err != nil {
 		return 0, "", err
@@ -135,7 +137,7 @@ func (s *PrivateFileBlobStore) Stage(ctx context.Context, key string, src io.Rea
 	if err != nil {
 		return 0, "", err
 	}
-	defer unix.Close(stagingFD)
+	defer func() { _ = unix.Close(stagingFD) }()
 	fd, err := unix.Openat(stagingFD, key, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		if errors.Is(err, unix.EEXIST) {
@@ -201,17 +203,17 @@ func (s *PrivateFileBlobStore) Commit(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(rootFD)
+	defer func() { _ = unix.Close(rootFD) }()
 	stagingFD, err := s.openDirectory(rootFD, "staging")
 	if err != nil {
 		return err
 	}
-	defer unix.Close(stagingFD)
+	defer func() { _ = unix.Close(stagingFD) }()
 	blobsFD, err := s.openDirectory(rootFD, "blobs")
 	if err != nil {
 		return err
 	}
-	defer unix.Close(blobsFD)
+	defer func() { _ = unix.Close(blobsFD) }()
 	if err := ensureFileBlobMissing(blobsFD, key); err != nil {
 		return err
 	}
@@ -243,12 +245,12 @@ func (s *PrivateFileBlobStore) Open(ctx context.Context, key string) (io.ReadClo
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(rootFD)
+	defer func() { _ = unix.Close(rootFD) }()
 	dirFD, err := s.openDirectory(rootFD, "blobs")
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(dirFD)
+	defer func() { _ = unix.Close(dirFD) }()
 	return openPrivateFileBlob(dirFD, key)
 }
 
@@ -272,7 +274,7 @@ func (s *PrivateFileBlobStore) FreeBytes(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer unix.Close(rootFD)
+	defer func() { _ = unix.Close(rootFD) }()
 	return availableFileBlobBytes(rootFD)
 }
 
@@ -287,12 +289,12 @@ func (s *PrivateFileBlobStore) remove(ctx context.Context, directory, key string
 	if err != nil {
 		return err
 	}
-	defer unix.Close(rootFD)
+	defer func() { _ = unix.Close(rootFD) }()
 	dirFD, err := s.openDirectory(rootFD, directory)
 	if err != nil {
 		return err
 	}
-	defer unix.Close(dirFD)
+	defer func() { _ = unix.Close(dirFD) }()
 	file, err := openPrivateFileBlob(dirFD, key)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -390,7 +392,7 @@ func validateFileBlobKey(key string) error {
 		return ErrInvalidFileBlobKey
 	}
 	for _, ch := range key {
-		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
 			return ErrInvalidFileBlobKey
 		}
 	}
