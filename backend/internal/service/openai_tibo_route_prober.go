@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"strconv"
 	"strings"
@@ -113,36 +114,42 @@ func (s *OpenAIGatewayService) runOpenAITiboProbe(parent context.Context, state 
 		}
 	}
 	defer func() { <-sem }()
-	if account == nil {
+	requestTriggered := account != nil
+	if s.accountRepo != nil || account == nil {
+		// Request-triggered snapshots are subject to the same identity fence as
+		// background probes. A token/proxy edit after selection must be sampled
+		// using the actual current binding, not a stale scheduler copy.
 		latest, err := s.latestOpenAITiboAccount(ctx, state.accountID)
 		if err != nil {
-			// Read failure or deleted row: retry shortly; enrollment drops
-			// accounts that are gone.
 			s.abortOpenAITiboProbe(state, route, nil)
 			return
 		}
-		if hold := s.openAITiboHoldFor(s.withOpenAIQuotaAutoPauseContext(ctx), latest, time.Now()); hold.parked || !hold.until.IsZero() {
-			// Ineligible, rate-limited or disabled accounts are not sampled; keep
-			// the last definitive sparkline until they are eligible again.
+		account = latest
+	}
+	if !requestTriggered {
+		if hold := s.openAITiboHoldFor(s.withOpenAIQuotaAutoPauseContext(ctx), account, time.Now()); hold.parked || !hold.until.IsZero() {
+			// Manual OAuth pauses may still probe under current quota policy.
 			s.abortOpenAITiboProbe(state, route, &hold)
 			return
 		}
-		account = latest
 	} else if skip := openAITiboAccountSkipReason(account, time.Now()); skip != "" {
-		// Request-path snapshot: it may be stale, so it only aborts this
-		// probe; the next enrollment applies the authoritative hold.
 		s.abortOpenAITiboProbe(state, route, nil)
 		return
 	}
+	probeIdentity := OpenAITiboProbeIdentity(account)
+	state.mu.Lock()
+	adoptOpenAITiboIdentityLocked(state, probeIdentity)
+	state.mu.Unlock()
 	startedAt := time.Now()
 	sample := s.probeOpenAITiboHTTP(ctx, account)
 	sample.startedAt = startedAt
+	sample.probeIdentity = probeIdentity
 	if parent.Err() != nil {
 		// Harvester shutdown interrupted the probe; this is not a sample.
 		s.abortOpenAITiboProbe(state, route, nil)
 		return
 	}
-	s.recordOpenAITiboSample(state, route, account, sample)
+	s.recordOpenAITiboSample(state, route, account, sample, parent)
 }
 
 // openAITiboHoldFor also checks the gateway switch and the model's runtime
@@ -184,25 +191,133 @@ func (s *OpenAIGatewayService) abortOpenAITiboProbe(state *openAITiboAccountStat
 	}
 }
 
-// recordOpenAITiboSample applies one probe sample: vote, schedule, persist a
-// changed or aging confirmed verdict, and log flips.
-func (s *OpenAIGatewayService) recordOpenAITiboSample(state *openAITiboAccountState, route openAITiboRoute, account *Account, sample openAITiboProbeSample) {
+// discardOpenAITiboSample releases a completed, already spent probe without
+// exposing its rejected observation. Unlike abort-before-send, it never refunds
+// the hourly budget. A new credential binding starts with empty quality state.
+func (s *OpenAIGatewayService) discardOpenAITiboSample(state *openAITiboAccountState, route openAITiboRoute, current *Account, rejectedIdentity string) {
+	state.mu.Lock()
+	if current != nil && (state.identity == "" || state.identity == rejectedIdentity) {
+		adoptOpenAITiboIdentityLocked(state, OpenAITiboProbeIdentity(current))
+	}
+	r := state.route(route)
+	done := r.done
+	r.inflight, r.done = false, nil
+	r.nextProbeAt = time.Now().Add(openAITiboProbeAbortRetry)
+	state.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+}
+
+func cloneOpenAITiboRouteState(r *openAITiboRouteState) openAITiboRouteState {
+	next := *r
+	next.pending = append([]openAITiboVerdict(nil), r.pending...)
+	next.recent = append([]openAITiboRecentSample(nil), r.recent...)
+	next.probes = append([]time.Time(nil), r.probes...)
+	next.flips = append([]time.Time(nil), r.flips...)
+	return next
+}
+
+// recordOpenAITiboSample stages an observation privately. A rejected repository
+// identity fence cannot leak the old credential's verdict or history into memory.
+// Readers keep their previous committed state while the bounded write completes.
+func (s *OpenAIGatewayService) recordOpenAITiboSample(state *openAITiboAccountState, route openAITiboRoute, account *Account, sample openAITiboProbeSample, parents ...context.Context) {
+	state.observationMu.Lock()
+	defer state.observationMu.Unlock()
+	parent := context.Background()
+	if len(parents) > 0 && parents[0] != nil {
+		parent = parents[0]
+	}
+	recordCtx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	identity := sample.probeIdentity
+	if identity == "" && !sample.verdict.definitive() {
+		// Internal non-definitive fixtures never invoke automatic actions.
+		identity = OpenAITiboProbeIdentity(account)
+	}
+	if recordCtx.Err() != nil {
+		s.discardOpenAITiboSample(state, route, nil, identity)
+		return
+	}
+	current := account
+	if s.accountRepo != nil {
+		latest, err := s.latestOpenAITiboAccount(recordCtx, state.accountID)
+		if err != nil {
+			s.discardOpenAITiboSample(state, route, nil, identity)
+			return
+		}
+		current = latest
+	}
+	if identity == "" || identity == "invalid" || identity != OpenAITiboProbeIdentity(current) {
+		s.discardOpenAITiboSample(state, route, current, identity)
+		return
+	}
 	cfg := s.openAITiboRouteConfig()
 	now := time.Now()
 	state.mu.Lock()
+	adoptOpenAITiboIdentityLocked(state, identity)
 	r := state.route(route)
-	before := r.effective(now, cfg)
-	transition := r.observe(sample, now, cfg)
-	r.scheduleNext(route, now, cfg)
-	done := r.done
-	r.inflight, r.done = false, nil
+	next := cloneOpenAITiboRouteState(r)
+	before := next.effective(now, cfg)
+	transition := next.observe(sample, now, cfg)
+	next.scheduleNext(route, now, cfg)
 	if transition.flipped && transition.from != "" {
-		r.flips = append(pruneOpenAITiboWindow(r.flips, now), now)
+		next.flips = append(pruneOpenAITiboWindow(next.flips, now), now)
 	}
-	after := r.effective(now, cfg)
-	persist := openAITiboShouldPersist(r, transition, now, cfg)
-	record := openAITiboVerdictRecordFor(r)
-	samples := append([]openAITiboRecentSample(nil), r.recent...)
+	after := next.effective(now, cfg)
+	persist := openAITiboShouldPersist(&next, transition, now, cfg) || (sample.verdict.definitive() && len(next.recent) > 0)
+	record := openAITiboVerdictRecordFor(&next)
+	record.ProbeIdentity = identity
+	samples := append([]openAITiboRecentSample(nil), next.recent...)
+	state.mu.Unlock()
+	if persist {
+		var fresh []TiboAutoGroupSample
+		if route == openAITiboRouteHTTP && sample.verdict.definitive() && isOpenAITiboAccount(current) {
+			startedAt := sample.startedAt
+			if startedAt.IsZero() {
+				startedAt = now
+			}
+			fresh = []TiboAutoGroupSample{{Verdict: string(sample.verdict), ProbeIdentity: identity, StartedAt: startedAt, CompletedAt: now}}
+		}
+		if err := s.persistOpenAITiboVerdict(state.accountID, route, record, samples, fresh...); err != nil {
+			current = nil
+			if errors.Is(err, ErrOpenAITiboProbeIdentityChanged) {
+				if latest, readErr := s.latestOpenAITiboAccount(recordCtx, state.accountID); readErr == nil {
+					current = latest
+				} else {
+					state.mu.Lock()
+					if state.identity == identity {
+						old := state.http
+						state.http = openAITiboRouteState{inflight: old.inflight, done: old.done, probes: old.probes}
+						state.identity = ""
+					}
+					state.mu.Unlock()
+				}
+			}
+			s.discardOpenAITiboSample(state, route, current, identity)
+			return
+		}
+		for _, sample := range samples {
+			if sample.At.After(next.persistedSampleAt) {
+				next.persistedSampleAt = sample.At
+			}
+		}
+		if record.CheckedAt.After(next.persistedAt) {
+			next.persistedAt = record.CheckedAt
+		}
+	}
+	state.mu.Lock()
+	r = state.route(route)
+	if state.identity != identity {
+		state.mu.Unlock()
+		s.discardOpenAITiboSample(state, route, nil, identity)
+		return
+	}
+	// Enrollment can update an authoritative availability hold during the write.
+	next.holdUntil, next.parked = r.holdUntil, r.parked
+	done := r.done
+	next.inflight, next.done = false, nil
+	*r = next
 	flipsHour, probesHour := countOpenAITiboWindow(r.flips, now), countOpenAITiboWindow(r.probes, now)
 	state.mu.Unlock()
 	if done != nil {
@@ -226,30 +341,6 @@ func (s *OpenAIGatewayService) recordOpenAITiboSample(state *openAITiboAccountSt
 	case before != after:
 		logger.L().Info("openai_tibo effective verdict", fields...)
 	}
-	// Unknown samples change neither the verdict nor the sparkline; skip the
-	// write so a failing account does not rewrite the same row every probe.
-	if persist || (sample.verdict.definitive() && len(samples) > 0) {
-		var fresh []TiboAutoGroupSample
-		if route == openAITiboRouteHTTP && sample.verdict.definitive() && isOpenAITiboAccount(account) {
-			startedAt := sample.startedAt
-			if startedAt.IsZero() {
-				startedAt = now
-			}
-			fresh = []TiboAutoGroupSample{{Verdict: string(sample.verdict), StartedAt: startedAt, CompletedAt: now}}
-		}
-		if s.persistOpenAITiboVerdict(state.accountID, route, record, samples, fresh...) == nil {
-			state.mu.Lock()
-			for _, sample := range samples {
-				if sample.At.After(r.persistedSampleAt) {
-					r.persistedSampleAt = sample.At
-				}
-			}
-			if record.CheckedAt.After(r.persistedAt) {
-				r.persistedAt = record.CheckedAt
-			}
-			state.mu.Unlock()
-		}
-	}
 }
 
 // openAITiboShouldPersist writes confirmed flips, and refreshes an unchanged
@@ -270,10 +361,11 @@ func openAITiboShouldPersist(r *openAITiboRouteState, transition openAITiboTrans
 }
 
 type openAITiboVerdictRecord struct {
-	Verdict   openAITiboVerdict `json:"verdict"`
-	Model     string            `json:"model"`
-	CheckedAt time.Time         `json:"checked_at"`
-	FlippedAt time.Time         `json:"flipped_at"`
+	ProbeIdentity string            `json:"probe_identity,omitempty"`
+	Verdict       openAITiboVerdict `json:"verdict"`
+	Model         string            `json:"model"`
+	CheckedAt     time.Time         `json:"checked_at"`
+	FlippedAt     time.Time         `json:"flipped_at"`
 }
 
 func openAITiboVerdictRecordFor(r *openAITiboRouteState) openAITiboVerdictRecord {
@@ -302,7 +394,14 @@ func (s *OpenAIGatewayService) persistOpenAITiboVerdict(accountID int64, route o
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	value := map[string]any{"model": record.Model, "recent_samples": encodeOpenAITiboRecentSamples(samples)}
+	if record.ProbeIdentity == "" {
+		current, err := s.latestOpenAITiboAccount(ctx, accountID)
+		if err != nil {
+			return err
+		}
+		record.ProbeIdentity = OpenAITiboProbeIdentity(current)
+	}
+	value := map[string]any{"model": record.Model, "probe_identity": record.ProbeIdentity, "recent_samples": encodeOpenAITiboRecentSamples(samples)}
 	if record.Verdict.definitive() && !record.CheckedAt.IsZero() {
 		value["verdict"] = string(record.Verdict)
 		value["checked_at"] = record.CheckedAt.UTC().Format(time.RFC3339Nano)
@@ -312,7 +411,16 @@ func (s *OpenAIGatewayService) persistOpenAITiboVerdict(accountID int64, route o
 	var err error
 	if repo, ok := s.accountRepo.(TiboAutoGroupRepository); ok && len(fresh) == 1 {
 		err = repo.PersistTiboProbeResult(ctx, accountID, updates, fresh[0])
+	} else if repo, ok := s.accountRepo.(TiboObservationRepository); ok {
+		err = repo.PersistTiboObservation(ctx, accountID, updates, record.ProbeIdentity)
 	} else {
+		current, readErr := s.latestOpenAITiboAccount(ctx, accountID)
+		if readErr != nil {
+			return readErr
+		}
+		if record.ProbeIdentity != OpenAITiboProbeIdentity(current) {
+			return ErrOpenAITiboProbeIdentityChanged
+		}
 		err = s.accountRepo.UpdateExtra(ctx, accountID, updates)
 	}
 	if err != nil {
@@ -375,6 +483,12 @@ func (s *OpenAIGatewayService) seedOpenAITiboStateLocked(state *openAITiboAccoun
 		return
 	}
 	raw := extra[openAITiboVerdictExtraKey(route)]
+	identity, _ := openAITiboExtraField(raw, "probe_identity").(string)
+	if state.identity != "" && identity != state.identity {
+		// Legacy/unbound history cannot be attributed to freshly edited
+		// credentials, including after a process restart.
+		return
+	}
 	if samples := validOpenAIAstraSamples(raw, now); len(samples) > 0 && len(r.recent) == 0 {
 		r.recent = samples
 		for _, sample := range samples {
@@ -458,6 +572,7 @@ func (s *OpenAIGatewayService) enrollOpenAITiboAccounts(ctx context.Context) {
 			// first seen while held is enrolled once it is eligible.
 			if state := s.loadOpenAITiboAccountState(account.ID); state != nil {
 				state.mu.Lock()
+				adoptOpenAITiboIdentityLocked(state, OpenAITiboProbeIdentity(account))
 				state.http.applyHold(hold)
 				state.mu.Unlock()
 				held++
@@ -466,6 +581,7 @@ func (s *OpenAIGatewayService) enrollOpenAITiboAccounts(ctx context.Context) {
 		}
 		state := s.openAITiboAccountState(account.ID)
 		state.mu.Lock()
+		adoptOpenAITiboIdentityLocked(state, OpenAITiboProbeIdentity(account))
 		state.http.applyHold(hold)
 		firstSeen := state.http.nextProbeAt.IsZero() && state.http.lastSampleAt.IsZero() && state.http.verdict == ""
 		s.seedOpenAITiboStateLocked(state, account.Extra, now, cfg)
@@ -684,6 +800,11 @@ func (s *OpenAIGatewayService) openAITiboRouteStatuses(account *Account, now tim
 		if state != nil {
 			state.mu.Lock()
 			r := state.route(route)
+			if state.identity != "" && state.identity != OpenAITiboProbeIdentity(account) {
+				state.mu.Unlock()
+				out = append(out, item)
+				continue
+			}
 			item.Verdict = string(r.effective(now, cfg))
 			item.Confirmed = string(r.verdict)
 			item.CheckedAt, item.FlippedAt, item.NextProbeAt = openAITiboTimePtr(r.checkedAt), openAITiboTimePtr(r.flippedAt), openAITiboTimePtr(r.nextDue())
@@ -715,6 +836,10 @@ func (s *OpenAIGatewayService) openAITiboRouteStatuses(account *Account, now tim
 			// rate-limited/paused): show the persisted sparkline instead of
 			// empty dots. Read-only; never seeds state or starts probes.
 			raw := account.Extra[openAITiboVerdictExtraKey(route)]
+			if !openAITiboHistoryMatchesAccount(raw, account) {
+				out = append(out, item)
+				continue
+			}
 			samples := parseOpenAITiboRecentSamples(openAITiboExtraField(raw, "recent_samples"))
 			if account.IsOpenAIOAuth() {
 				samples = validOpenAIAstraSamples(raw, now)
@@ -752,18 +877,63 @@ func (s *OpenAIGatewayService) observeOpenAITiboResponseModel(account *Account, 
 }
 
 func (s *OpenAIGatewayService) forceOpenAITiboDegraded(account *Account, route openAITiboRoute) {
-	cfg := s.openAITiboRouteConfig()
 	state := s.openAITiboAccountState(account.ID)
+	state.observationMu.Lock()
+	defer state.observationMu.Unlock()
+	identity := OpenAITiboProbeIdentity(account)
+	if s.accountRepo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		current, err := s.latestOpenAITiboAccount(ctx, account.ID)
+		cancel()
+		if err != nil {
+			return
+		}
+		if identity != OpenAITiboProbeIdentity(current) {
+			state.mu.Lock()
+			if state.identity == "" || state.identity == identity {
+				adoptOpenAITiboIdentityLocked(state, OpenAITiboProbeIdentity(current))
+			}
+			state.mu.Unlock()
+			return
+		}
+	}
+	cfg := s.openAITiboRouteConfig()
 	now := time.Now()
 	state.mu.Lock()
+	adoptOpenAITiboIdentityLocked(state, identity)
 	r := state.route(route)
-	before := r.effective(now, cfg)
-	changed := r.forceDegraded(now)
+	next := cloneOpenAITiboRouteState(r)
+	before := next.effective(now, cfg)
+	changed := next.forceDegraded(now)
 	if changed {
-		r.flips = append(pruneOpenAITiboWindow(r.flips, now), now)
+		next.flips = append(pruneOpenAITiboWindow(next.flips, now), now)
 	}
-	record := openAITiboVerdictRecordFor(r)
-	samples := append([]openAITiboRecentSample(nil), r.recent...)
+	record := openAITiboVerdictRecordFor(&next)
+	record.ProbeIdentity = identity
+	samples := append([]openAITiboRecentSample(nil), next.recent...)
+	state.mu.Unlock()
+	if err := s.persistOpenAITiboVerdict(account.ID, route, record, samples); err != nil {
+		return
+	}
+	for _, sample := range samples {
+		if sample.At.After(next.persistedSampleAt) {
+			next.persistedSampleAt = sample.At
+		}
+	}
+	if record.CheckedAt.After(next.persistedAt) {
+		next.persistedAt = record.CheckedAt
+	}
+	state.mu.Lock()
+	if state.identity != identity {
+		state.mu.Unlock()
+		return
+	}
+	r = state.route(route)
+	next.inflight, next.done, next.holdUntil, next.parked = r.inflight, r.done, r.holdUntil, r.parked
+	// A tick can reserve a probe while passive persistence is outside state.mu.
+	// Preserve its live budget independently of the earlier observation clone.
+	next.probes = append([]time.Time(nil), r.probes...)
+	*r = next
 	if route == openAITiboRouteHTTP {
 		r.nextProbeAt = now
 		s.startOpenAITiboProbeLocked(state, route, account, false, cfg, now)
@@ -773,18 +943,6 @@ func (s *OpenAIGatewayService) forceOpenAITiboDegraded(account *Account, route o
 		s.openaiTiboStats.noteFlip()
 		logger.L().Info("openai_tibo verdict flip", zap.Int64("account_id", account.ID), zap.String("route", string(route)),
 			zap.String("from", string(before)), zap.String("to", string(openAITiboDegraded)), zap.String("cause", "response_model_mismatch"))
-	}
-	if s.persistOpenAITiboVerdict(account.ID, route, record, samples) == nil {
-		state.mu.Lock()
-		for _, sample := range samples {
-			if sample.At.After(r.persistedSampleAt) {
-				r.persistedSampleAt = sample.At
-			}
-		}
-		if record.CheckedAt.After(r.persistedAt) {
-			r.persistedAt = record.CheckedAt
-		}
-		state.mu.Unlock()
 	}
 }
 

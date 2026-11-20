@@ -39,7 +39,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
 	qualityPreviousResponseID, _ := reqBody["previous_response_id"].(string)
-	if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, qualityPreviousResponseID); err != nil {
+	if err := openAITiboQualityAdmissionError(ctx, account.IsOpenAITiboQualityIsolated(), qualityPreviousResponseID); err != nil {
 		return nil, err
 	}
 	responseModelObserver := &upstreamResponseModelObserver{}

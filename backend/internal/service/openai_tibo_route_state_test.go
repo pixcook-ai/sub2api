@@ -350,7 +350,8 @@ func TestTiboStartupLoadSeedsFromFullRows(t *testing.T) {
 	repo := tc.svc.accountRepo.(*tiboAccountRepo)
 	require.NoError(t, repo.UpdateExtra(context.Background(), tc.account.ID, map[string]any{
 		openAITiboVerdictExtraKey(openAITiboRouteHTTP): map[string]any{"verdict": "degraded", "model": openAICodexTicketDefaultModel,
-			"checked_at": time.Now().Add(-time.Minute).Format(time.RFC3339Nano), "flipped_at": time.Now().Add(-time.Minute).Format(time.RFC3339Nano)},
+			"probe_identity": OpenAITiboProbeIdentity(tc.account),
+			"checked_at":     time.Now().Add(-time.Minute).Format(time.RFC3339Nano), "flipped_at": time.Now().Add(-time.Minute).Format(time.RFC3339Nano)},
 	}))
 	tc.svc.probeOpenAITiboRoutes(context.Background())
 	tc.svc.openaiTiboProbeWG.Wait()

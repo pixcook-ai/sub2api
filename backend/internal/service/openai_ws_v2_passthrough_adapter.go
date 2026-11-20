@@ -1155,6 +1155,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				if qualityErr := s.checkOpenAITiboQualityAdmission(ctx, account, out); qualityErr != nil {
+					return out, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "account is isolated by Tibo quality monitoring", qualityErr)
+				}
 				// 双开：后续帧的发送边界，与首帧同一收口。
 				out = s.guardOpenAICodexWSFrameTurnState(c, account, out)
 				out = applyCodexWSFrameWireProfile(c, account, out, turnState)
@@ -1183,6 +1186,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 	upstreamFirstMessageSent := false
+	// Dialing may wait; re-read isolation before the first upstream frame.
+	if qualityErr := s.checkOpenAITiboQualityAdmission(ctx, account, firstClientMessage); qualityErr != nil {
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "account is isolated by Tibo quality monitoring", qualityErr)
+	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 	// 双开：首帧的发送边界——turn-state 走帧内、字段序对齐真客户端（握手上已被投影删掉）。
 	firstClientMessage = s.guardOpenAICodexWSFrameTurnState(c, account, firstClientMessage)

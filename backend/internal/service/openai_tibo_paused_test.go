@@ -44,8 +44,8 @@ func TestTiboPausedOAuthEligibility(t *testing.T) {
 		{name: "model rate limit", mutate: func(a *Account) {
 			a.Extra["model_rate_limits"] = map[string]any{openAICodexTicketDefaultModel: map[string]any{"rate_limit_reset_at": future.Format(time.RFC3339Nano)}}
 		}},
-		{name: "5h exhausted", mutate: func(a *Account) { a.Extra["codex_5h_used_percent"] = 100.0 }},
-		{name: "7d exhausted despite disabled threshold", mutate: func(a *Account) {
+		{name: "5h exhaustion at configured threshold", mutate: func(a *Account) { a.Extra["codex_5h_used_percent"], a.Extra["auto_pause_5h_threshold"] = 100.0, 1.0 }},
+		{name: "disabled threshold keeps target quota policy", allowed: true, mutate: func(a *Account) {
 			a.Extra["codex_7d_used_percent"], a.Extra["auto_pause_7d_disabled"] = 100.0, true
 		}},
 		{name: "account 5h threshold", mutate: func(a *Account) { a.Extra["auto_pause_5h_threshold"] = 0.2 }},
@@ -58,25 +58,25 @@ func TestTiboPausedOAuthEligibility(t *testing.T) {
 		{name: "account disables global threshold", allowed: true, settings: OpsOpenAIAccountQuotaAutoPauseSettings{DefaultThreshold7d: 0.1}, mutate: func(a *Account) {
 			a.Extra["auto_pause_7d_disabled"] = true
 		}},
-		{name: "credits explicitly enabled", allowed: true, mutate: func(a *Account) {
-			a.Extra["codex_5h_used_percent"], a.Extra[OpenAICreditsEnabledExtraKey] = 100.0, true
+		{name: "auto reset below consume threshold", allowed: true, mutate: func(a *Account) {
+			a.Extra[OpenAIAutoResetCreditEnabledExtraKey] = true
 		}},
-		{name: "credits still obey threshold", mutate: func(a *Account) {
-			a.Extra["codex_5h_used_percent"], a.Extra[OpenAICreditsEnabledExtraKey], a.Extra["auto_pause_5h_threshold"] = 100.0, true, 0.9
+		{name: "auto reset waits at consume threshold", mutate: func(a *Account) {
+			a.Extra["codex_5h_used_percent"], a.Extra[OpenAIAutoResetCreditEnabledExtraKey] = 100.0, true
 		}},
 		{name: "quota window reset", allowed: true, mutate: func(a *Account) {
-			a.Extra["codex_5h_used_percent"], a.Extra["codex_5h_reset_at"] = 100.0, past.Format(time.RFC3339Nano)
+			a.Extra["codex_5h_used_percent"], a.Extra["codex_5h_reset_at"], a.Extra["auto_pause_5h_threshold"] = 100.0, past.Format(time.RFC3339Nano), 1.0
 		}},
 		{name: "relative quota window reset", allowed: true, mutate: func(a *Account) {
-			a.Extra["codex_5h_used_percent"], a.Extra["codex_5h_reset_after_seconds"] = 100.0, 60
+			a.Extra["codex_5h_used_percent"], a.Extra["codex_5h_reset_after_seconds"], a.Extra["auto_pause_5h_threshold"] = 100.0, 60, 1.0
 			a.Extra["codex_usage_updated_at"] = now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
 		}},
 		{name: "stale quota without pending reset", allowed: true, mutate: func(a *Account) {
-			a.Extra["codex_5h_used_percent"] = 100.0
+			a.Extra["codex_5h_used_percent"], a.Extra["auto_pause_5h_threshold"] = 100.0, 1.0
 			a.Extra["codex_usage_updated_at"] = now.Add(-openAICodexAutoPauseStaleAfter - time.Hour).Format(time.RFC3339Nano)
 		}},
 		{name: "stale quota with pending reset", mutate: func(a *Account) {
-			a.Extra["codex_5h_used_percent"], a.Extra["codex_5h_reset_at"] = 100.0, future.Format(time.RFC3339Nano)
+			a.Extra["codex_5h_used_percent"], a.Extra["codex_5h_reset_at"], a.Extra["auto_pause_5h_threshold"] = 100.0, future.Format(time.RFC3339Nano), 1.0
 			a.Extra["codex_usage_updated_at"] = now.Add(-openAICodexAutoPauseStaleAfter - time.Hour).Format(time.RFC3339Nano)
 		}},
 		{name: "unknown quota keeps scheduler policy", allowed: true, mutate: func(a *Account) { a.Extra = nil }},
@@ -132,7 +132,7 @@ func TestTiboPausedOAuthRechecksBeforeProbe(t *testing.T) {
 			require.NotNil(t, state)
 			switch change {
 			case "quota":
-				repo.setAccount(func(a *Account) { a.Extra["codex_7d_used_percent"] = 100.0 })
+				repo.setAccount(func(a *Account) { a.Extra["codex_7d_used_percent"], a.Extra["auto_pause_7d_threshold"] = 100.0, 1.0 })
 			case "global threshold":
 				tc.svc.settingService.SetOpenAIQuotaAutoPauseSettings(OpsOpenAIAccountQuotaAutoPauseSettings{DefaultThreshold5h: 0.1})
 			case "rate limit":
@@ -145,14 +145,16 @@ func TestTiboPausedOAuthRechecksBeforeProbe(t *testing.T) {
 					tc.svc.recordOpenAIAccountModelTransientFailure(tc.account, openAICodexTicketDefaultModel, time.Now())
 				}
 			case "feature disabled":
-				enabled := false
-				tc.svc.cfg.Gateway.OpenAITiboRoute.Enabled = &enabled
+				tc.svc.settingService.settingRepo.(*tiboProbeEnabledSettingRepo).disabled = true
+				tc.svc.settingService.openAITiboSettingsCache.Store(nil)
 			}
 			// Enrollment is throttled: the run must re-read the row/settings itself.
 			tc.svc.probeOpenAITiboRoutes(context.Background())
 			tc.svc.openaiTiboProbeWG.Wait()
 			require.Empty(t, tc.upstream.requests)
-			require.Positive(t, repo.gets.Load(), "authoritative account was reloaded")
+			if change != "feature disabled" {
+				require.Positive(t, repo.gets.Load(), "authoritative account was reloaded")
+			}
 			state.mu.Lock()
 			defer state.mu.Unlock()
 			require.Empty(t, state.http.probes, "aborted probe refunded its budget")
@@ -169,7 +171,7 @@ func TestTiboPausedOAuthResumesAfterHoldClears(t *testing.T) {
 			var clear func()
 			switch reason {
 			case "quota":
-				repo.setAccount(func(a *Account) { a.Extra["codex_7d_used_percent"] = 100.0 })
+				repo.setAccount(func(a *Account) { a.Extra["codex_7d_used_percent"], a.Extra["auto_pause_7d_threshold"] = 100.0, 1.0 })
 				clear = func() {
 					repo.setAccount(func(a *Account) { a.Extra["codex_7d_reset_at"] = time.Now().Add(-time.Minute).Format(time.RFC3339Nano) })
 				}
@@ -243,8 +245,14 @@ func TestTiboPausedOAuthKeepsProbeBudgetAndSingleFlight(t *testing.T) {
 }
 
 // Quota-policy tests use the same persisted opt-in boundary as production.
-type tiboProbeEnabledSettingRepo struct{ SettingRepository }
+type tiboProbeEnabledSettingRepo struct {
+	SettingRepository
+	disabled bool
+}
 
-func (*tiboProbeEnabledSettingRepo) GetValue(context.Context, string) (string, error) {
+func (r *tiboProbeEnabledSettingRepo) GetValue(context.Context, string) (string, error) {
+	if r.disabled {
+		return `{"enabled":false}`, nil
+	}
 	return `{"enabled":true}`, nil
 }

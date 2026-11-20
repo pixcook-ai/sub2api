@@ -195,7 +195,9 @@ func (s *OpenAIGatewayService) openAITiboSchedulerTier(account *Account, request
 	httpVerdict := openAITiboUnknown
 	if state := s.loadOpenAITiboAccountState(account.ID); state != nil {
 		state.mu.Lock()
-		httpVerdict = state.http.effective(now, cfg)
+		if state.identity == "" || state.identity == OpenAITiboProbeIdentity(account) {
+			httpVerdict = state.http.effective(now, cfg)
+		}
 		state.mu.Unlock()
 	}
 	if httpVerdict == openAITiboHealthy {

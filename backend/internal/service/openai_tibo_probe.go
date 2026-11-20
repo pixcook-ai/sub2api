@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -193,3 +194,40 @@ func openAICodexSuccessfulCompletionModel(payload []byte, eventType string) (str
 // IsOpenAITiboAccount is shared with transactional probe-result persistence so
 // automation rechecks the same eligibility on the authoritative account row.
 func IsOpenAITiboAccount(account *Account) bool { return isOpenAITiboAccount(account) }
+
+// openAITiboSyntheticProbeKey is private, in-process provenance. No header,
+// client body or magic prompt can grant this narrowly scoped exemption.
+type openAITiboSyntheticProbeKey struct{}
+
+func withOpenAITiboSyntheticProbe(ctx context.Context, accountID int64) context.Context {
+	return context.WithValue(ctx, openAITiboSyntheticProbeKey{}, accountID)
+}
+
+func isOpenAITiboSyntheticProbe(ctx context.Context, account *Account) bool {
+	if ctx == nil || account == nil || account.ID <= 0 {
+		return false
+	}
+	id, ok := ctx.Value(openAITiboSyntheticProbeKey{}).(int64)
+	return ok && id == account.ID
+}
+
+// adoptOpenAITiboIdentityLocked drops quality history when credentials or proxy
+// binding changes. The account's already spent budget and in-flight channel
+// survive so a rebinding neither refunds traffic nor launches duplicate probes.
+// Caller holds state.mu.
+func adoptOpenAITiboIdentityLocked(state *openAITiboAccountState, identity string) bool {
+	if identity == "" || identity == "invalid" || state.identity == identity {
+		return false
+	}
+	if state.identity != "" {
+		old := state.http
+		state.http = openAITiboRouteState{inflight: old.inflight, done: old.done, probes: old.probes}
+	}
+	state.identity = identity
+	return true
+}
+
+func openAITiboHistoryMatchesAccount(raw any, account *Account) bool {
+	identity, _ := openAITiboExtraField(raw, "probe_identity").(string)
+	return identity != "" && identity != "invalid" && identity == OpenAITiboProbeIdentity(account)
+}

@@ -150,7 +150,9 @@ func TestTiboUnknownSampleSkipsPersist(t *testing.T) {
 	tc.svc.recordOpenAITiboSample(state, openAITiboRouteHTTP, tc.account, openAITiboProbeSample{verdict: openAITiboUnknown, status: http.StatusBadRequest})
 	_, wrote := repo.updateFor(tc.account.ID)
 	require.False(t, wrote, "unknown samples change nothing worth writing")
-	tc.svc.recordOpenAITiboSample(state, openAITiboRouteHTTP, tc.account, tiboSample(openAITiboHealthy))
+	sample := tiboSample(openAITiboHealthy)
+	sample.probeIdentity = OpenAITiboProbeIdentity(tc.account)
+	tc.svc.recordOpenAITiboSample(state, openAITiboRouteHTTP, tc.account, sample)
 	_, wrote = repo.updateFor(tc.account.ID)
 	require.True(t, wrote)
 }

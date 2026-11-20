@@ -129,11 +129,6 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamOnce(
 		gatewayPoolCleanupUnsent(release)
 		return nil, false, failure
 	}
-	// Recheck after any gateway ticket wait and before an upstream send.
-	if err := s.checkOpenAITiboQualityAdmissionForPrevious(request.Context(), account, ""); err != nil {
-		gatewayPoolCleanupUnsent(release)
-		return nil, false, err
-	}
 	if poolRequest {
 		gatewayPoolUsageMarkSending(request.Context(), identity)
 	}
@@ -288,6 +283,11 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamRoundTrip(request *http.Request, 
 }
 
 func (s *OpenAIGatewayService) doOpenAIUpstreamRoundTripUnrecorded(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	if request != nil {
+		if err := s.checkOpenAITiboQualityAdmissionForPrevious(request.Context(), account, ""); err != nil {
+			return nil, err
+		}
+	}
 	if request.Context().Value(gatewayPoolProbeTraceKey{}) == nil {
 		// Fresh rest/deadline checks and the optional recording-policy read are
 		// preparation, not upstream first-output time. A/B probes never arm it.

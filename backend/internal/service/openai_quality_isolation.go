@@ -19,44 +19,52 @@ func withOpenAITiboQualityAdmission(ctx context.Context, body []byte) context.Co
 	return context.WithValue(ctx, openAITiboPreviousResponseKey{}, previous)
 }
 
-// checkOpenAITiboQualityAdmission closes the gap between scheduler selection and
-// the upstream send (including requests which waited for a slot). Probes use a
-// separate transport so an isolated account can still produce recovery samples.
+// openAITiboQualityIsolationReader is deliberately narrower than GetByID: final
+// admission reads only the durable quality bit and its credential parent's bit.
+// Keeping this optional preserves custom repositories that only supply snapshots.
+type openAITiboQualityIsolationReader interface {
+	GetOpenAITiboQualityIsolation(context.Context, int64) (bool, error)
+}
+
+// checkOpenAITiboQualitySnapshotAdmission is the cheap entry gate. Authoritative
+// state is checked again at the final HTTP or WS send boundary, after any waits.
+func (s *OpenAIGatewayService) checkOpenAITiboQualitySnapshotAdmission(ctx context.Context, account *Account, body []byte) error {
+	if account == nil || !account.IsOpenAI() || isOpenAITiboSyntheticProbe(ctx, account) {
+		return nil
+	}
+	return openAITiboQualityAdmissionError(ctx, account.IsOpenAITiboQualityIsolated(), gjson.GetBytes(body, "previous_response_id").String())
+}
+
+// checkOpenAITiboQualityAdmission closes the scheduler-to-send gap. Recovery
+// probes have private provenance, while ordinary requests always read the durable
+// gate when the production repository supports it, independently of Enabled.
 func (s *OpenAIGatewayService) checkOpenAITiboQualityAdmission(ctx context.Context, account *Account, body []byte) error {
 	return s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, gjson.GetBytes(body, "previous_response_id").String())
 }
 
 func (s *OpenAIGatewayService) checkOpenAITiboQualityAdmissionForPrevious(ctx context.Context, account *Account, previousResponseID string) error {
-	if previousResponseID == "" && ctx != nil {
-		previousResponseID, _ = ctx.Value(openAITiboPreviousResponseKey{}).(string)
-	}
-	if account == nil || !account.IsOpenAI() {
+	if account == nil || !account.IsOpenAI() || isOpenAITiboSyntheticProbe(ctx, account) {
 		return nil
 	}
-	current := account
-	if s != nil && s.accountRepo != nil {
-		latest, err := s.accountRepo.GetByID(ctx, account.ID)
-		if err != nil {
-			return fmt.Errorf("verify OpenAI quality isolation: %w", err)
+	isolated := account.IsOpenAITiboQualityIsolated()
+	if s != nil {
+		if reader, ok := s.accountRepo.(openAITiboQualityIsolationReader); ok {
+			current, err := reader.GetOpenAITiboQualityIsolation(ctx, account.ID)
+			if err != nil {
+				return fmt.Errorf("verify OpenAI quality isolation: %w", err)
+			}
+			isolated = current
 		}
-		if latest == nil {
-			return fmt.Errorf("verify OpenAI quality isolation: account is unavailable")
-		}
-		current = latest
 	}
-	isolated := current.IsOpenAITiboQualityIsolated()
-	if !isolated && current.IsShadow() {
-		if s == nil || s.accountRepo == nil {
-			return fmt.Errorf("verify OpenAI quality isolation: shadow parent is unavailable")
-		}
-		parent, err := s.accountRepo.GetByID(ctx, *current.ParentAccountID)
-		if err != nil || parent == nil {
-			return fmt.Errorf("verify OpenAI quality isolation: shadow parent is unavailable")
-		}
-		isolated = parent.IsOpenAITiboQualityIsolated()
-	}
+	return openAITiboQualityAdmissionError(ctx, isolated, previousResponseID)
+}
+
+func openAITiboQualityAdmissionError(ctx context.Context, isolated bool, previousResponseID string) error {
 	if !isolated {
 		return nil
+	}
+	if previousResponseID == "" && ctx != nil {
+		previousResponseID, _ = ctx.Value(openAITiboPreviousResponseKey{}).(string)
 	}
 	action := NextAccountRetry
 	if strings.TrimSpace(previousResponseID) != "" {
@@ -86,6 +94,13 @@ func (s *OpenAIGatewayService) checkOpenAITiboPreviousResponseAdmission(ctx cont
 	id, err := store.GetResponseAccount(ctx, derefGroupID(groupID), previousResponseID)
 	if err != nil || id <= 0 {
 		return nil
+	}
+	if reader, ok := s.accountRepo.(openAITiboQualityIsolationReader); ok {
+		isolated, err := reader.GetOpenAITiboQualityIsolation(ctx, id)
+		if err != nil {
+			return fmt.Errorf("verify OpenAI quality isolation: %w", err)
+		}
+		return openAITiboQualityAdmissionError(ctx, isolated, previousResponseID)
 	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil || account == nil {

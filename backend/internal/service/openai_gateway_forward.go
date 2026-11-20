@@ -27,7 +27,7 @@ func (s *OpenAIGatewayService) Forward(
 	body []byte,
 ) (result *OpenAIForwardResult, err error) {
 	ctx = withOpenAITiboQualityAdmission(ctx, body)
-	if err := s.checkOpenAITiboQualityAdmission(ctx, account, body); err != nil {
+	if err := s.checkOpenAITiboQualitySnapshotAdmission(ctx, account, body); err != nil {
 		return nil, err
 	}
 	var tiboRun *openAITiboRun

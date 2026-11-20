@@ -83,7 +83,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if account == nil {
 		return errors.New("account is nil")
 	}
-	if err := s.checkOpenAITiboQualityAdmission(ctx, account, firstClientMessage); err != nil {
+	if err := s.checkOpenAITiboQualitySnapshotAdmission(ctx, account, firstClientMessage); err != nil {
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "account is isolated by Tibo quality monitoring", err)
 	}
 	// Wrap the existing turn hook, preserving pricing/slot behavior. Run the
@@ -93,6 +93,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		qualityHooks = *hooks
 	}
 	beforeQualityTurn := qualityHooks.BeforeTurn
+	qualityTurnCleanupOnReject := true
 	qualityHooks.BeforeTurn = func(turn int) error {
 		if beforeQualityTurn != nil {
 			if err := beforeQualityTurn(turn); err != nil {
@@ -100,7 +101,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, ""); err != nil {
-			if beforeQualityTurn != nil && qualityHooks.AfterTurn != nil {
+			if qualityTurnCleanupOnReject && beforeQualityTurn != nil && qualityHooks.AfterTurn != nil {
 				// The original hook may already hold the turn's concurrency slot.
 				qualityHooks.AfterTurn(turn, nil, err)
 			}
@@ -173,6 +174,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			// 首轮准入由握手路径完成；后续 response.create 会在写入上游前
 			// 依次回调 BeforeRequest 和 BeforeTurn，并在终止或失败时回调
 			// AfterTurn，从而覆盖 turn 级利润复核、定价冻结和并发槽位释放。
+			// The passthrough adapter always reports a failed relay turn itself.
+			qualityTurnCleanupOnReject = false
 			return s.proxyResponsesWebSocketV2Passthrough(
 				ctx,
 				c,

@@ -43,6 +43,21 @@ func (r *accountRepository) persistTiboProbeResult(ctx context.Context, id int64
 	if verdict != sample.Verdict || !at.Equal(sample.CompletedAt) {
 		return fmt.Errorf("Tibo probe sample does not match its observation")
 	}
+	if sample.ProbeIdentity != "" {
+		var observation struct {
+			ProbeIdentity string `json:"probe_identity"`
+		}
+		encoded, err := json.Marshal(updates[service.OpenAIAstraPolicyExtraKey])
+		if err != nil {
+			return fmt.Errorf("encode Tibo probe observation identity: %w", err)
+		}
+		if err := json.Unmarshal(encoded, &observation); err != nil {
+			return fmt.Errorf("decode Tibo probe observation identity: %w", err)
+		}
+		if sample.ProbeIdentity == "invalid" || observation.ProbeIdentity != sample.ProbeIdentity {
+			return service.ErrOpenAITiboProbeIdentityChanged
+		}
+	}
 	// This capability owns its transaction. It is never called by admin writes
 	// or by historical sample recovery.
 	tx, err := r.client.Tx(ctx)
@@ -66,8 +81,9 @@ func (r *accountRepository) persistTiboProbeResult(ctx context.Context, id int64
 	}
 	var platform, credentialType, status string
 	var raw, rawCredentials []byte
-	err = scanSingleRow(ctx, client, `SELECT platform, type, status, extra, credentials FROM accounts
-		WHERE id=$1 AND deleted_at IS NULL FOR NO KEY UPDATE`, []any{id}, &platform, &credentialType, &status, &raw, &rawCredentials)
+	var proxyID sql.NullInt64
+	err = scanSingleRow(ctx, client, `SELECT platform, type, status, extra, credentials, proxy_id FROM accounts
+		WHERE id=$1 AND deleted_at IS NULL FOR NO KEY UPDATE`, []any{id}, &platform, &credentialType, &status, &raw, &rawCredentials, &proxyID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return service.ErrAccountNotFound
@@ -85,6 +101,15 @@ func (r *accountRepository) persistTiboProbeResult(ctx context.Context, id int64
 		}
 	}
 	current := &service.Account{ID: id, Platform: platform, Type: credentialType, Status: status, Extra: extra, Credentials: credentials}
+	if proxyID.Valid {
+		current.ProxyID = &proxyID.Int64
+	}
+	if sample.ProbeIdentity != "" && (sample.ProbeIdentity == "invalid" || sample.ProbeIdentity != service.OpenAITiboProbeIdentity(current)) {
+		// The result belongs to the old upstream identity. Store neither its history
+		// nor any automatic action against the replacement credentials/proxy.
+		logger.LegacyPrintf("repository.account", "[TiboProbe] account=%d skipped=identity_changed", id)
+		return service.ErrOpenAITiboProbeIdentityChanged
+	}
 	eligible := status == service.StatusActive && service.IsOpenAITiboAccount(current)
 	var previous struct {
 		StartedAt time.Time `json:"started_at"`
@@ -318,3 +343,66 @@ func (r *accountRepository) ClearOpenAITiboQualityIsolation(ctx context.Context,
 	r.syncSchedulerAccountSnapshot(ctx, id)
 	return nil
 }
+
+// PersistTiboObservation holds the account row from identity validation through
+// history persistence. It cannot perform quality isolation or group movement.
+func (r *accountRepository) PersistTiboObservation(ctx context.Context, id int64, updates map[string]any, probeIdentity string) error {
+	if probeIdentity == "" || probeIdentity == "invalid" {
+		return service.ErrOpenAITiboProbeIdentityChanged
+	}
+	observation, ok := updates[service.OpenAIAstraPolicyExtraKey]
+	if !ok {
+		return fmt.Errorf("Tibo observation missing history")
+	}
+	var value struct {
+		ProbeIdentity string `json:"probe_identity"`
+	}
+	encoded, err := json.Marshal(observation)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(encoded, &value); err != nil || value.ProbeIdentity != probeIdentity {
+		return service.ErrOpenAITiboProbeIdentityChanged
+	}
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	var platform, typ string
+	var credentialsRaw []byte
+	var proxyID sql.NullInt64
+	if err := scanSingleRow(ctx, client, `SELECT platform,type,credentials,proxy_id FROM accounts WHERE id=$1 AND deleted_at IS NULL FOR NO KEY UPDATE`, []any{id}, &platform, &typ, &credentialsRaw, &proxyID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return service.ErrAccountNotFound
+		}
+		return err
+	}
+	var credentials map[string]any
+	if len(credentialsRaw) > 0 {
+		if err := json.Unmarshal(credentialsRaw, &credentials); err != nil {
+			return err
+		}
+	}
+	current := &service.Account{ID: id, Platform: platform, Type: typ, Credentials: credentials}
+	if proxyID.Valid {
+		current.ProxyID = &proxyID.Int64
+	}
+	if service.OpenAITiboProbeIdentity(current) != probeIdentity {
+		return service.ErrOpenAITiboProbeIdentityChanged
+	}
+	// Only the history payload is admitted through this port. The caller cannot
+	// smuggle isolation flags or an active-sample watermark into a passive write.
+	history := map[string]any{service.OpenAIAstraPolicyExtraKey: observation}
+	if err := r.UpdateExtra(dbent.NewTxContext(ctx, tx), id, history); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return nil
+}
+
+var _ service.TiboObservationRepository = (*accountRepository)(nil)

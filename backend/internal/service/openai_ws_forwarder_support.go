@@ -606,6 +606,10 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		return 0, nil, "", nil
 	}
 	if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
+		if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, responseID); err != nil {
+			// A parent quality quarantine also preserves the shadow's owner binding.
+			return 0, nil, "", nil
+		}
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
 	}
@@ -648,6 +652,9 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 			return 0, nil, "", nil
 		}
 		if !parentHealthyForShadow(latest, s.parentAccountLookup(ctx)) {
+			if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, latest, responseID); err != nil {
+				return 0, nil, "", nil
+			}
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 			return 0, nil, "", nil
 		}

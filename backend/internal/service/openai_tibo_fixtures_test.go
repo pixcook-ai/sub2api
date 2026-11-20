@@ -11,9 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -116,7 +116,8 @@ func cookieWSHTTPResponse(answer string) *http.Response {
 
 func newTiboRouteCase(t *testing.T, _, _ bool, responses ...*http.Response) *tiboRouteCase {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
+	// A test can construct another case while the first probe is still running.
+	// Gin mode is process-global and is not needed to construct probe contexts.
 	upstream := &httpUpstreamRecorder{responses: responses}
 	on := true
 	cfg := &config.Config{}
@@ -169,4 +170,42 @@ func requireTiboProbe(t *testing.T, body []byte) {
 	require.Contains(t, string(body), openAITiboProbePrompt)
 	require.Contains(t, string(body), `"model":"gpt-6-astra"`)
 	require.Contains(t, string(body), `"effort":"xhigh"`)
+}
+
+// tiboSafeUpstream is a concurrency-safe synthetic HTTP boundary. It decodes
+// this fork's wire encoding before separating probe and business requests.
+type tiboSafeUpstream struct {
+	mu         sync.Mutex
+	probeGate  chan struct{}
+	probes     int
+	businesses int
+}
+
+func (u *tiboSafeUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	raw, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	body := codexTestDecodeUpstreamBody(req.Header, raw)
+	if strings.Contains(string(body), openAITiboProbePrompt) {
+		if u.probeGate != nil {
+			select {
+			case <-u.probeGate:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+		}
+		u.mu.Lock()
+		u.probes++
+		u.mu.Unlock()
+		return cookieWSHTTPResponse("True"), nil
+	}
+	u.mu.Lock()
+	u.businesses++
+	u.mu.Unlock()
+	return cookieWSHTTPResponse("http ok"), nil
+}
+
+func (u *tiboSafeUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, concurrency)
 }

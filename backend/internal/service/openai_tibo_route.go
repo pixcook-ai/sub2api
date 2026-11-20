@@ -52,11 +52,12 @@ const (
 
 // openAITiboProbeSample is one Tibo probe observation for a route.
 type openAITiboProbeSample struct {
-	startedAt   time.Time
-	verdict     openAITiboVerdict // healthy, degraded or unknown
-	status      int               // upstream HTTP status; 0 when no response
-	answerClass string            // classifyTiboAnswer class, "" when none
-	retryAt     *time.Time        // Retry-After / rate-limit reset on a non-200 response
+	startedAt     time.Time
+	probeIdentity string
+	verdict       openAITiboVerdict // healthy, degraded or unknown
+	status        int               // upstream HTTP status; 0 when no response
+	answerClass   string            // classifyTiboAnswer class, "" when none
+	retryAt       *time.Time        // Retry-After / rate-limit reset on a non-200 response
 }
 
 // openAITiboSettings is the resolved gateway.openai_tibo_route configuration.
@@ -175,10 +176,12 @@ type openAITiboRouteState struct {
 }
 
 type openAITiboAccountState struct {
-	mu         sync.Mutex
-	accountID  int64
-	lastUsedAt time.Time
-	http       openAITiboRouteState
+	observationMu sync.Mutex
+	identity      string
+	mu            sync.Mutex
+	accountID     int64
+	lastUsedAt    time.Time
+	http          openAITiboRouteState
 }
 
 func (st *openAITiboAccountState) route(_ openAITiboRoute) *openAITiboRouteState {
@@ -561,7 +564,19 @@ func (s *OpenAIGatewayService) openAITiboRequestVerdicts(ctx context.Context, ac
 	now := time.Now()
 	state.mu.Lock()
 	state.lastUsedAt = now
-	s.seedOpenAITiboStateLocked(state, account.Extra, now, cfg)
+	identity := OpenAITiboProbeIdentity(account)
+	if state.identity != "" && state.identity != identity {
+		// Request snapshots are not authoritative enough to adopt a different
+		// binding. Enrollment or the actual probe reload owns that transition.
+		state.mu.Unlock()
+		return openAITiboUnknown
+	}
+	if state.identity == "" {
+		adoptOpenAITiboIdentityLocked(state, identity)
+	}
+	if state.identity == identity {
+		s.seedOpenAITiboStateLocked(state, account.Extra, now, cfg)
+	}
 	var wait <-chan struct{}
 	if skip := openAITiboAccountSkipReason(account, now); skip == "" {
 		if state.http.cold() {
@@ -590,6 +605,9 @@ func (s *OpenAIGatewayService) openAITiboRequestVerdicts(ctx context.Context, ac
 	now = time.Now()
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	if state.identity != identity {
+		return openAITiboUnknown
+	}
 	return state.http.effective(now, cfg)
 }
 
@@ -600,7 +618,7 @@ func (s *OpenAIGatewayService) probeOpenAITiboHTTP(ctx context.Context, account 
 	if s == nil || s.httpUpstream == nil || account == nil || !s.openAITiboRouteApplies(account) {
 		return unknown
 	}
-	ctx = withoutOpenAITurnStateRelay(ctx)
+	ctx = withOpenAITiboSyntheticProbe(withoutOpenAITurnStateRelay(ctx), account.ID)
 	req, err := s.buildOpenAITiboProbeRequest(ctx, account)
 	if err != nil {
 		return unknown

@@ -75,7 +75,11 @@ func (a *Account) OpenAIOAuthModelPolicy() *OpenAIOAuthModelPolicy {
 	if a == nil || !a.IsOpenAIOAuth() {
 		return nil
 	}
-	verdict, at := LatestOpenAIAstraSample(a.Extra[OpenAIAstraPolicyExtraKey])
+	raw := a.Extra[OpenAIAstraPolicyExtraKey]
+	if !openAITiboHistoryMatchesAccount(raw, a) {
+		raw = nil
+	}
+	verdict, at := LatestOpenAIAstraSample(raw)
 	policy := &OpenAIOAuthModelPolicy{Verdict: verdict, Scope: "luna_and_images"}
 	if verdict == string(openAITiboHealthy) {
 		policy.Scope = "non_luna"

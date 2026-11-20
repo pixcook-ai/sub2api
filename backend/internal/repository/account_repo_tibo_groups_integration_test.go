@@ -487,3 +487,159 @@ func TestTiboQualityIsolationSkipsForeignAccounts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, true, current.Extra[service.OpenAITiboQualityIsolatedExtraKey])
 }
+
+func TestTiboQualityIsolationMatchingProbeIdentity(t *testing.T) {
+	f := newTiboGroupFixture(t)
+	f.settings(service.TiboAutomationSettings{Enabled: true, AutoGroupEnabled: true, HealthyGroupID: f.healthy, DegradedGroupID: f.welfare, PauseOnDegraded: true})
+	a := f.account(service.AccountTypeOAuth, service.PlatformOpenAI, f.healthy, f.other)
+	current, err := f.repo.GetByID(f.ctx, a.ID)
+	require.NoError(t, err)
+	now := time.Now()
+	updates, sample := tiboGroupObservation("degraded", now.Add(-time.Millisecond), now)
+	sample.ProbeIdentity = service.OpenAITiboProbeIdentity(current)
+	updates[service.OpenAIAstraPolicyExtraKey].(map[string]any)["probe_identity"] = sample.ProbeIdentity
+	require.NotEmpty(t, sample.ProbeIdentity)
+	require.NoError(t, f.repo.PersistTiboProbeResult(f.ctx, a.ID, updates, sample))
+	stored, err := f.repo.GetByID(f.ctx, a.ID)
+	require.NoError(t, err)
+	require.Equal(t, true, stored.Extra[service.OpenAITiboQualityIsolatedExtraKey])
+	require.Contains(t, stored.Extra, service.OpenAIAstraPolicyExtraKey)
+	require.Contains(t, f.memberships(a.ID), f.welfare)
+}
+
+func TestTiboQualityIsolationRejectsProbeFromReplacedIdentity(t *testing.T) {
+	for _, change := range []string{"credentials", "proxy binding"} {
+		t.Run(change, func(t *testing.T) {
+			f := newTiboGroupFixture(t)
+			f.settings(service.TiboAutomationSettings{Enabled: true, AutoGroupEnabled: true, HealthyGroupID: f.healthy, DegradedGroupID: f.welfare, PauseOnDegraded: true})
+			a := f.account(service.AccountTypeOAuth, service.PlatformOpenAI, f.healthy, f.other)
+			original, err := f.repo.GetByID(f.ctx, a.ID)
+			require.NoError(t, err)
+			started := time.Now()
+			identity := service.OpenAITiboProbeIdentity(original)
+			if change == "credentials" {
+				_, err = f.client.Account.UpdateOneID(a.ID).SetCredentials(map[string]any{"access_token": "replacement-fixture-only"}).Save(f.ctx)
+				require.NoError(t, err)
+			} else {
+				proxy := mustCreateProxy(t, f.client, &service.Proxy{Name: "Tibo identity fixture"})
+				t.Cleanup(func() {
+					_, err := integrationDB.ExecContext(context.Background(), "UPDATE accounts SET proxy_id=NULL WHERE id=$1", a.ID)
+					require.NoError(t, err)
+					_, err = integrationDB.ExecContext(context.Background(), "DELETE FROM proxies WHERE id=$1", proxy.ID)
+					require.NoError(t, err)
+				})
+				_, err = f.client.Account.UpdateOneID(a.ID).SetProxyID(proxy.ID).Save(f.ctx)
+				require.NoError(t, err)
+			}
+			before := f.memberships(a.ID)
+			updates, sample := tiboGroupObservation("degraded", started, time.Now())
+			sample.ProbeIdentity = identity
+			updates[service.OpenAIAstraPolicyExtraKey].(map[string]any)["probe_identity"] = sample.ProbeIdentity
+			require.ErrorIs(t, f.repo.PersistTiboProbeResult(f.ctx, a.ID, updates, sample), service.ErrOpenAITiboProbeIdentityChanged)
+			stored, err := f.repo.GetByID(f.ctx, a.ID)
+			require.NoError(t, err)
+			require.NotEqual(t, identity, service.OpenAITiboProbeIdentity(stored))
+			require.Equal(t, before, f.memberships(a.ID))
+			require.NotContains(t, stored.Extra, service.OpenAIAstraPolicyExtraKey, "an old identity cannot publish its history onto a replacement")
+			require.NotContains(t, stored.Extra, tiboAutoGroupSampleKey)
+			require.NotEqual(t, true, stored.Extra[service.OpenAITiboQualityIsolatedExtraKey])
+			// A subsequent probe of the replacement identity remains admissible;
+			// rejecting the old result must not consume its timestamp or new history.
+			now := time.Now()
+			freshUpdates, freshSample := tiboGroupObservation("degraded", now, now)
+			freshSample.ProbeIdentity = service.OpenAITiboProbeIdentity(stored)
+			freshUpdates[service.OpenAIAstraPolicyExtraKey].(map[string]any)["probe_identity"] = freshSample.ProbeIdentity
+			require.NoError(t, f.repo.PersistTiboProbeResult(f.ctx, a.ID, freshUpdates, freshSample))
+			accepted, err := f.repo.GetByID(f.ctx, a.ID)
+			require.NoError(t, err)
+			require.Equal(t, true, accepted.Extra[service.OpenAITiboQualityIsolatedExtraKey])
+			require.Contains(t, f.memberships(a.ID), f.welfare)
+		})
+	}
+}
+
+func TestTiboQualityIsolationRejectsMismatchedObservationIdentity(t *testing.T) {
+	f := newTiboGroupFixture(t)
+	f.settings(service.TiboAutomationSettings{Enabled: true, PauseOnDegraded: true})
+	for _, observationIdentity := range []string{"", "foreign-identity"} {
+		t.Run("observation-"+observationIdentity, func(t *testing.T) {
+			a := f.account(service.AccountTypeOAuth, service.PlatformOpenAI, f.other)
+			now := time.Now()
+			updates, sample := tiboGroupObservation("degraded", now, now)
+			current, err := f.repo.GetByID(f.ctx, a.ID)
+			require.NoError(t, err)
+			sample.ProbeIdentity = service.OpenAITiboProbeIdentity(current)
+			if observationIdentity != "" {
+				updates[service.OpenAIAstraPolicyExtraKey].(map[string]any)["probe_identity"] = observationIdentity
+			}
+			require.ErrorIs(t, f.repo.PersistTiboProbeResult(f.ctx, a.ID, updates, sample), service.ErrOpenAITiboProbeIdentityChanged)
+			stored, err := f.repo.GetByID(f.ctx, a.ID)
+			require.NoError(t, err)
+			require.NotContains(t, stored.Extra, service.OpenAIAstraPolicyExtraKey)
+			require.NotContains(t, stored.Extra, tiboAutoGroupSampleKey)
+			require.NotEqual(t, true, stored.Extra[service.OpenAITiboQualityIsolatedExtraKey])
+		})
+	}
+}
+
+func TestTiboObservationPersistsOnlyHistoryWithoutActions(t *testing.T) {
+	f := newTiboGroupFixture(t)
+	f.settings(service.TiboAutomationSettings{Enabled: true, AutoGroupEnabled: true, HealthyGroupID: f.healthy, DegradedGroupID: f.welfare, PauseOnDegraded: true})
+	a := f.account(service.AccountTypeOAuth, service.PlatformOpenAI, f.healthy, f.other)
+	current, err := f.repo.GetByID(f.ctx, a.ID)
+	require.NoError(t, err)
+	identity := service.OpenAITiboProbeIdentity(current)
+	now := time.Now()
+	updates, _ := tiboGroupObservation("degraded", now, now)
+	updates[service.OpenAIAstraPolicyExtraKey].(map[string]any)["probe_identity"] = identity
+	// The passive port never grants action or active-sample watermark authority,
+	// even if an internal caller accidentally supplies extra update keys.
+	updates[service.OpenAITiboQualityIsolatedExtraKey] = true
+	updates[tiboAutoGroupSampleKey] = map[string]any{"started_at": now.UTC().Format(time.RFC3339Nano)}
+	before := f.memberships(a.ID)
+	require.NoError(t, f.repo.PersistTiboObservation(f.ctx, a.ID, updates, identity))
+	stored, err := f.repo.GetByID(f.ctx, a.ID)
+	require.NoError(t, err)
+	require.Contains(t, stored.Extra, service.OpenAIAstraPolicyExtraKey)
+	verdict, _ := service.LatestOpenAIAstraSample(stored.Extra[service.OpenAIAstraPolicyExtraKey])
+	require.Equal(t, "degraded", verdict)
+	require.NotContains(t, stored.Extra, service.OpenAITiboQualityIsolatedExtraKey)
+	require.NotContains(t, stored.Extra, tiboAutoGroupSampleKey)
+	require.Equal(t, before, f.memberships(a.ID))
+	require.Contains(t, f.cache.accounts[a.ID].Extra, service.OpenAIAstraPolicyExtraKey)
+}
+
+func TestTiboObservationRejectsReplacedIdentityWithoutHistory(t *testing.T) {
+	for _, change := range []string{"credentials", "proxy binding"} {
+		t.Run(change, func(t *testing.T) {
+			f := newTiboGroupFixture(t)
+			a := f.account(service.AccountTypeOAuth, service.PlatformOpenAI, f.healthy, f.other)
+			original, err := f.repo.GetByID(f.ctx, a.ID)
+			require.NoError(t, err)
+			identity := service.OpenAITiboProbeIdentity(original)
+			if change == "credentials" {
+				_, err = f.client.Account.UpdateOneID(a.ID).SetCredentials(map[string]any{"access_token": "replacement-passive-fixture"}).Save(f.ctx)
+				require.NoError(t, err)
+			} else {
+				proxy := mustCreateProxy(t, f.client, &service.Proxy{Name: "Tibo passive identity fixture"})
+				t.Cleanup(func() {
+					_, err := integrationDB.ExecContext(context.Background(), "UPDATE accounts SET proxy_id=NULL WHERE id=$1", a.ID)
+					require.NoError(t, err)
+					_, err = integrationDB.ExecContext(context.Background(), "DELETE FROM proxies WHERE id=$1", proxy.ID)
+					require.NoError(t, err)
+				})
+				_, err = f.client.Account.UpdateOneID(a.ID).SetProxyID(proxy.ID).Save(f.ctx)
+				require.NoError(t, err)
+			}
+			now := time.Now()
+			updates, _ := tiboGroupObservation("degraded", now, now)
+			updates[service.OpenAIAstraPolicyExtraKey].(map[string]any)["probe_identity"] = identity
+			require.ErrorIs(t, f.repo.PersistTiboObservation(f.ctx, a.ID, updates, identity), service.ErrOpenAITiboProbeIdentityChanged)
+			stored, err := f.repo.GetByID(f.ctx, a.ID)
+			require.NoError(t, err)
+			require.NotContains(t, stored.Extra, service.OpenAIAstraPolicyExtraKey)
+			require.NotContains(t, stored.Extra, tiboAutoGroupSampleKey)
+			require.NotEqual(t, true, stored.Extra[service.OpenAITiboQualityIsolatedExtraKey])
+		})
+	}
+}
