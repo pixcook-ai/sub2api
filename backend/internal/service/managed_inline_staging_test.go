@@ -125,7 +125,7 @@ func TestManagedInlineStagingCancellationClosesAndRemovesBlobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	cancel()
 	deadline := time.Now().Add(2 * time.Second)
 	for {

@@ -70,7 +70,7 @@ func (s *AccountTestService) probeRejectedOpenAIAccess(ctx context.Context, acco
 	}
 	resp, err := s.codexProbeGateway(nil).doOpenAICodexProbe(req, resolveAccountProxyURL(account), account)
 	if resp != nil && resp.Body != nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	}
 	if err != nil || resp == nil || ctx.Err() != nil {
 		return openAIAccessProbeResult{outcome: openAIAccessProbeRetry}

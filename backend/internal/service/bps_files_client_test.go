@@ -269,9 +269,11 @@ func TestBPSFilesBackendEnsureTransportFailureDoesNotLeakOrRetry(t *testing.T) {
 	file := managedfiles.File{FileRef: "file-public", Mode: "upload", Filename: "test.txt", MIME: "text/plain", Bytes: 5, SHA256: strings.Repeat("b", 64)}
 	request := managedfiles.EnsureRequest{Contract: managedfiles.Contract, Expected: bpsFilesTestIdentity(), AdmissionID: "admission-1", FileRef: file.FileRef, OperationID: "operation-1"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		connection, _, err := w.(http.Hijacker).Hijack()
+		hijacker, ok := w.(http.Hijacker)
+		require.True(t, ok)
+		connection, _, err := hijacker.Hijack()
 		require.NoError(t, err)
-		connection.Close()
+		_ = connection.Close()
 	}))
 	defer server.Close()
 	transport := &bpsFilesTestTransport{client: server.Client()}

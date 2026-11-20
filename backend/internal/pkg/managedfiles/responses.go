@@ -75,7 +75,7 @@ func decodeResponsesPolicyError(status int, raw []byte) *ResponsesPreflightError
 	default:
 		return nil
 	}
-	param := fields["param"].(string)
+	param, _ := fields["param"].(string)
 	if len(param) == 0 || len(param) > 128 {
 		return nil
 	}

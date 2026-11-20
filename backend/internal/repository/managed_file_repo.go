@@ -106,7 +106,7 @@ func (r *ManagedFileLedgerRepository) LookupBindings(ctx context.Context, owner 
 	if e != nil {
 		return out, e
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, e := r.lockFiles(ctx, tx, owner, refs, true)
 	if e != nil {
 		return out, e
@@ -141,7 +141,7 @@ func (r *ManagedFileLedgerRepository) Reserve(ctx context.Context, in service.Ma
 	if e != nil {
 		return nil, e
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, e := r.lockFiles(ctx, tx, in.Owner, refs, true)
 	if e != nil {
 		return nil, e
@@ -253,7 +253,7 @@ func (r *ManagedFileLedgerRepository) StartOperation(ctx context.Context, permit
 	if e != nil {
 		return e
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, e := r.lockFiles(ctx, tx, permit.Owner, []string{ref}, true)
 	if e != nil {
 		return e
@@ -297,7 +297,7 @@ func (r *ManagedFileLedgerRepository) CompleteOperation(ctx context.Context, per
 	if e != nil {
 		return false, e
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, e := r.lockFiles(ctx, tx, permit.Owner, []string{ref}, false)
 	if e != nil {
 		return false, e
@@ -371,7 +371,7 @@ func (r *ManagedFileLedgerRepository) MarkUncertain(ctx context.Context, permit 
 	if e != nil {
 		return e
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, e := r.lockFiles(ctx, tx, permit.Owner, []string{ref}, false)
 	if e != nil {
 		return e
@@ -411,7 +411,7 @@ func (r *ManagedFileLedgerRepository) AuthorizeGeneration(ctx context.Context, p
 	if e != nil {
 		return e
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, e := r.lockFiles(ctx, tx, permit.Owner, refs, true)
 	if e != nil {
 		return e
@@ -473,7 +473,7 @@ func inspectManagedRemote(ctx context.Context, tx *sql.Tx, snapshot service.File
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	digest := sha256.New()
 	fmt.Fprintf(digest, "bps-file-ledger/1:%d:%d:%t\n", snapshot.ID, bindingVersion, possible)
 	evidence := false
@@ -547,7 +547,7 @@ func (r *ManagedFileLedgerRepository) ReleaseReservation(ctx context.Context, pe
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, err := r.lockFiles(ctx, tx, permit.Owner, refs, false)
 	if err != nil {
 		return err

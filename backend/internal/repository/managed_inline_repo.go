@@ -63,7 +63,7 @@ func (r *ManagedFileLedgerRepository) ReserveInline(ctx context.Context, in serv
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx, `INSERT INTO gateway_inline_requests(request_id,user_id,api_key_id,group_id,main_account_id,backend_id,subject_fingerprint,credential_generation,lease_token,lease_until)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+($10*INTERVAL '1 microsecond')) ON CONFLICT(request_id) DO NOTHING`, p.RequestID, p.Owner.UserID, p.Owner.APIKeyID, p.Owner.GroupID, p.Selection.AccountID, p.Selection.Identity.BackendID, p.Selection.Identity.SubjectFingerprint, p.Selection.Identity.CredentialGeneration, p.LeaseToken, in.Lease.Microseconds())
 	if err != nil {
@@ -109,7 +109,7 @@ func lockInline(ctx context.Context, tx *sql.Tx, p *service.ManagedInlineReserva
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	expected := make(map[string]service.ManagedInlineBinding, len(p.Files))
 	for _, f := range p.Files {
 		expected[f.Descriptor.FileRef] = f
@@ -155,7 +155,7 @@ func (r *ManagedFileLedgerRepository) StartInline(ctx context.Context, p *servic
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, err := lockInline(ctx, tx, p)
 	if err != nil {
 		return err
@@ -188,7 +188,7 @@ func (r *ManagedFileLedgerRepository) CompleteInline(ctx context.Context, p *ser
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, err := lockInline(ctx, tx, p)
 	if err != nil {
 		return false, err
@@ -230,7 +230,7 @@ func (r *ManagedFileLedgerRepository) MarkInlineUncertain(ctx context.Context, p
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, err := lockInline(ctx, tx, p)
 	if err != nil {
 		return err
@@ -255,7 +255,7 @@ func (r *ManagedFileLedgerRepository) AuthorizeInlineGeneration(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, err := lockInline(ctx, tx, p)
 	if err != nil {
 		return err
@@ -280,7 +280,7 @@ func (r *ManagedFileLedgerRepository) ReleaseInline(ctx context.Context, p *serv
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = lockInline(ctx, tx, p); err != nil {
 		return err
 	}

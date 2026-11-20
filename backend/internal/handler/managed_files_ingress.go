@@ -98,7 +98,7 @@ func (h *OpenAIGatewayHandler) ManagedFilesIngress(c *gin.Context) {
 		rejectManagedFilesUnsupported(c)
 		return
 	}
-	defer plan.Close()
+	defer func() { _ = plan.Close() }()
 	c.Request = c.Request.WithContext(service.WithManagedFilePlan(c.Request.Context(), plan))
 	c.Next()
 }

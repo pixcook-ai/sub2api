@@ -37,7 +37,7 @@ func (r *ManagedFileLedgerRepository) ReserveRecovery(ctx context.Context, in se
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	files, err := r.lockFiles(ctx, tx, permit.Owner, refs, true)
 	if err != nil {
 		return nil, err

@@ -186,7 +186,12 @@ func TestBPSFilesAdmitRecoverableCancellationDuringResponseDoesNotRecover(t *tes
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(409)
-		w.(http.Flusher).Flush()
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("fixture writer does not flush")
+			return
+		}
+		flusher.Flush()
 		close(started)
 		<-r.Context().Done()
 	}))

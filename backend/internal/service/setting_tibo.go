@@ -45,7 +45,7 @@ func DecodeOpenAITiboSettings(value string) (TiboAutomationSettings, error) {
 		return settings, nil
 	}
 	if strings.TrimSpace(value) == "null" {
-		return settings, fmt.Errorf("Tibo settings must be a JSON object")
+		return settings, fmt.Errorf("tibo settings must be a JSON object")
 	}
 	if err := json.Unmarshal([]byte(value), &settings); err != nil {
 		return DefaultOpenAITiboSettings(), fmt.Errorf("decode Tibo settings: %w", err)
@@ -92,14 +92,14 @@ func (s *SettingService) GetOpenAITiboSettings(ctx context.Context) (TiboAutomat
 
 func (s *SettingService) UpdateOpenAITiboSettings(ctx context.Context, settings TiboAutomationSettings) error {
 	if s == nil || s.settingRepo == nil {
-		return fmt.Errorf("Tibo settings repository is unavailable")
+		return fmt.Errorf("tibo settings repository is unavailable")
 	}
 	if err := validateOpenAITiboSettings(settings); err != nil {
 		return err
 	}
 	if settings.AutoGroupEnabled {
 		if s.defaultSubGroupReader == nil {
-			return fmt.Errorf("Tibo group validation is unavailable")
+			return fmt.Errorf("tibo group validation is unavailable")
 		}
 		for _, id := range []int64{settings.HealthyGroupID, settings.DegradedGroupID} {
 			group, err := s.defaultSubGroupReader.GetByID(ctx, id)

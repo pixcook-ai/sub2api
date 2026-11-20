@@ -63,7 +63,7 @@ func TestManagedFileURLStagesExactBytesAtOriginalPosition(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := io.ReadAll(r)
-	r.Close()
+	_ = r.Close()
 	if err != nil || string(data) != "hello" {
 		t.Fatalf("wrong body %q: %v", data, err)
 	}
