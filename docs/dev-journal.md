@@ -150,3 +150,12 @@ TDD 首先复现快照缺少工具合同，再复现启动参数缺少 `--tool-c
 最终 service 全包以 parallel=16、timeout=900s 完整结束（316.726s）：23,915 PASS、29 SKIP、4 FAIL，即上述既有响应断言和一次 gwpool 超时/预热时序子测试，分别连同父测试计数；无超时。gwpool 用例单独 20 轮共 60 个 tests/subtests 通过，保留全包失败与未排除波动的事实，不将它描述为已修复。Tibo 所有关键功能回归通过，包括实际模拟 HTTP 恢复、私有豁免边界、身份拒绝不污染内存、读取 unknown、并发预算退款及 shadow owner 绑定。最终隔离 PG18/Redis 迁移/事务/缓存与 usage 三态验证 39/39 通过、零跳过（`/tmp/tibo-postgres-final-20261120.jsonl`）；未触碰既有开发或生产 DB。
 
 最终 service/repository 定向竞态检测 199/199 tests/subtests 通过，零失败、零跳过、零 DATA RACE（`/tmp/tibo-race-recheck-20261120.jsonl`）。该轮先发现测试夹具重复 `gin.SetMode(TestMode)` 与已运行探针 `gin.New` 的全局读写竞态；删除夹具全局写入后同组重验通过。Standards 核对 Gin 源码确认仅调试输出有差异，未改变生产逻辑或放松断言。
+
+
+## 2026-11-20 — Tibo 完整 service 验收失败修复
+
+用户要求处理前次保留的两项失败，工作基线固定 `829e710fe`。EOF 失败终态旧预期删除 usage/output，与已提交的公开安全终态契约冲突；当前工作树已实际复现 RED，修正为保留计数和空 output，保留完整字节相等并加强两次 flush 快照及 output token 检查。没有修改生产响应。
+
+gwpool 新受控场景把真实共享取票阻塞到业务 waiter 返回过期429，再放行仍存活 follower；旧全部发送为零的断言确定性失败为2次合法预热（`/tmp/tibo-gwpool-shared-red-20261120.jsonl`）。测试改用 atomic 分别记录业务/预热，并等待 prepare/warm worker 收尾；严格要求过期业务零发送、活 follower 完成两次预热、原context保持有效。无生产调度逻辑改动。连续100轮400 tests/subtests通过；受影响组5轮竞态155项通过，零失败/跳过、零DATA RACE（`/tmp/tibo-gwpool-repeat-green-20261120.jsonl`、`/tmp/tibo-failures-race-green-20261120.jsonl`）。Spec和Standards独立评审均无发现。最终全后台unit结果记录如下。
+
+最终完整后台 unit：`go test -p=1 -parallel=16 -tags=unit ./... -count=1 -timeout=900s -json` 退出0；66个测试包通过、52个无测试包，33,398 tests/subtests通过、60跳过、零失败/超时。service整包307.691s通过。跳过项包括需要外部服务/指定环境的集成或实时测试及既有显式跳过，不视为这些范围通过。日志 `/tmp/tibo-backend-after-failure-fixes-20261120.jsonl`。此前两项失败在该最终全套均通过；保留前次失败记录用于追溯。没有真实上游、浏览器、生产操作、推送或部署。

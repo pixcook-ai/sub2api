@@ -36,3 +36,15 @@
 - 最终 Tibo 功能关键回归（隔离后真实模拟 HTTP 恢复探测、拒绝伪造豁免、旧身份不发布/不读取、并发预算及退款、shadow 续接 owner 保留）在完整 service 运行中均通过。未放宽基线失败用例，也不宣称完整后台全绿。
 - 最终真实 PostgreSQL：`CI=1 go test -p=1 -tags=integration ./internal/repository -run 'TestTibo(AutoGroup|QualityIsolation|Observation)|TestUsageLog_RouteDegradedRoundTripFilterAndPartialIndex' -count=1 -timeout=300s -json`，39/39 tests/subtests 通过，零失败、零跳过；使用隔离 PG18/Redis 容器并实际应用所有迁移，非既有开发/生产数据库。日志 `/tmp/tibo-postgres-final-20261120.jsonl`。新 narrow-read 夹具先后发现 dimension 约束和真实 RESTRICT 错误码断言不符，均只修正夹具后完整重验通过，未修改基线 schema。
 - 最终定向 `-race` 覆盖 service/repository 的 Tibo、RouteDegraded 与 ClassifyTibo：199/199 tests/subtests 通过，零失败、零跳过、零 DATA RACE，两包均通过（`/tmp/tibo-race-recheck-20261120.jsonl`）。此前竞态来自 `newTiboRouteCase` 在另一探针运行时重复调用全局 `gin.SetMode(TestMode)`；删除夹具中的该全局写入后同组重验转绿。Standards 已核对 Gin 源码，确认只影响调试输出，未更改生产逻辑或放松断言。
+
+## 后续：修复完整 service 验收失败
+
+用户要求继续处理两项失败，沿用现有流输出与 gwpool 业务截止测试边界，工作基线固定为 `829e710fe`。
+
+- EOF 失败终态已在当前工作树重新复现：旧断言删除 usage/output，当前公开契约保留安全计数与空 output；与既有 `TestOpenAIForwardFailedStreamPreservesSafeClientTerminal` 一致。仅修正预期并加强两次 flush 完整字节及 output token 断言，不修改生产响应。
+- 响应 flush、真实 Forward 安全终态及部分用量定向测试通过（service 6.887s），独立只读复核无发现。
+- gwpool 受控共享场景已确定性 RED：阻塞取票，业务 waiter 到期返回 429 后放行仍存活的 follower，后者完成两次 state-echo；旧“全部发送为零”断言实际失败为 2（`/tmp/tibo-gwpool-shared-red-20261120.jsonl`）。这证明总发送不等于业务发送，未发现需要修改生产截止逻辑的证据。
+- 原失败测试使用 atomic 区分业务/预热、明确业务正文并等待 worker 收尾；新增场景严格要求业务零发送、活 follower 两次预热完成、原 context 不受截止污染。仅改测试，未放宽业务发送约束。
+- gwpool 同组 100 轮共 400 tests/subtests 通过，零失败/跳过（`/tmp/tibo-gwpool-repeat-green-20261120.jsonl`）。Spec/Standards 独立评审均无发现；最终 race/全包结果见下方。
+- 最终受影响竞态组（gwpool 截止、response flush、真实 Forward 安全终态）5 轮共 155 tests/subtests 通过，零失败/跳过、零 DATA RACE（`/tmp/tibo-failures-race-green-20261120.jsonl`）。
+- 最终完整后台 unit：`go test -p=1 -parallel=16 -tags=unit ./... -count=1 -timeout=900s -json` 退出0；66个测试包通过、52个无测试包，33,398 tests/subtests通过、60跳过、零失败/超时。service整包307.691s通过。跳过项包括需要外部服务/指定环境的集成或实时测试及既有显式跳过，不视为这些范围通过。日志 `/tmp/tibo-backend-after-failure-fixes-20261120.jsonl`。此前两项失败在该最终全套均通过；保留前次失败记录用于追溯。没有真实上游、浏览器、生产操作、推送或部署。
