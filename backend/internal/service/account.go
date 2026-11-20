@@ -2014,6 +2014,10 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if a == nil {
 		return false
 	}
+	if capability == OpenAIEndpointCapabilityBPSLocalResponses {
+		_, err := BPSStoredResponsesConfigForAccount(a)
+		return err == nil
+	}
 	if capability == OpenAIEndpointCapabilityBPSFiles {
 		_, err := BPSFilesConfigForAccount(a)
 		return err == nil

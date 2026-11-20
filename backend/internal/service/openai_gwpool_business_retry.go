@@ -96,6 +96,12 @@ func gatewayPoolInferenceURL(u *url.URL) bool {
 // verification; failed attempts can therefore be replaced without splicing
 // streams or leaking a discarded response's IDs, state or tool calls.
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (response *http.Response, responseErr error) {
+	if request != nil && isStoredResponseGeneration(request.Context()) {
+		if err := claimStoredResponseGeneration(request.Context(), account.ID); err != nil {
+			return nil, err
+		}
+		return s.doOpenAIUpstreamRoundTrip(request, proxyURL, account)
+	}
 	if request != nil && IsManagedFileGeneration(request.Context()) {
 		if err := claimManagedFileGeneration(request.Context(), account.ID); err != nil {
 			return nil, err
