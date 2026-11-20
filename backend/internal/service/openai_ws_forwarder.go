@@ -249,6 +249,8 @@ type OpenAIWSIngressHooks struct {
 	ClientLifecycleContext context.Context
 	// Opt-in ticket waits keep a reader alive even before upstream headers.
 	ClientReadMessage func(context.Context, time.Duration) (coderws.MessageType, []byte, error)
+	// BeforeClientFrame checks every received payload before protocol filtering.
+	BeforeClientFrame func([]byte) error
 	// InitialRequestModel is the client-facing model from the first frame,
 	// before channel or account mapping. Ingress modes preserve it for usage
 	// attribution while MapRequestModel determines the upstream model.

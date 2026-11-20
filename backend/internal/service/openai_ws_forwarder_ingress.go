@@ -532,6 +532,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				nil,
 			)
 		}
+		if hooks != nil && hooks.BeforeClientFrame != nil {
+			if err := hooks.BeforeClientFrame(payload); err != nil {
+				return nil, err
+			}
+		}
 		return payload, nil
 	}
 

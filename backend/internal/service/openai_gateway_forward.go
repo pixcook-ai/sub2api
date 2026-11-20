@@ -32,6 +32,15 @@ func (s *OpenAIGatewayService) Forward(
 	defer func() { gwpoolSink.publish(result) }()
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	managedPlan := ManagedFilePlanFromContext(ctx)
+	if managedPlan != nil {
+		if s.managedFiles == nil {
+			return nil, ErrManagedFileNotReady
+		}
+		if _, configErr := BPSFilesConfigForAccount(account); configErr != nil {
+			return nil, ErrManagedFileNotReady
+		}
+	}
 	if account.UsesOpenAIRawRelay() {
 		return s.forwardOpenAIRawRelay(ctx, c, account, body)
 	}
@@ -1086,6 +1095,33 @@ func (s *OpenAIGatewayService) Forward(
 		ctx = context.WithValue(ctx, gatewayPoolFirstOutputBudgetKey{}, poolFirstOutputBudget)
 	}
 
+	if managedPlan != nil {
+		resolved, resolveErr := s.managedFiles.Resolve(ctx, managedPlan, account, body)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		body = resolved.Body
+		var managedGroupID *int64
+		if value, exists := c.Get("api_key"); exists {
+			if key, valid := value.(*APIKey); valid && key != nil {
+				managedGroupID = key.GroupID
+			}
+		}
+		managedAPIKey, managedBaseURL := account.GetCredential("api_key"), account.GetCredential("base_url")
+		authorizeManagedSend := func(sendCtx context.Context) error {
+			current, checkErr := s.RecheckManagedFileAccount(sendCtx, managedGroupID, account.ID, requestedModel)
+			if checkErr != nil {
+				return ErrManagedFileNotReady
+			}
+			currentConfig, checkErr := BPSFilesConfigForAccount(current)
+			if checkErr != nil || currentConfig != resolved.Config || current.GetCredential("api_key") != managedAPIKey || current.GetCredential("base_url") != managedBaseURL {
+				return ErrManagedFileNotReady
+			}
+			return resolved.Authorize(sendCtx)
+		}
+		ctx = withManagedFileGeneration(ctx, resolved.AccountID, resolved.Config.ServiceKey, resolved.AdmissionID, resolved.OwnerRef, resolved.GroupRef, resolved.BindingSHA256, authorizeManagedSend)
+	}
+
 	httpInvalidEncryptedContentRetryTried := false
 	compactModelFallbackRetried := false
 	agentTaskRecoveryTried := false
@@ -1119,6 +1155,7 @@ func (s *OpenAIGatewayService) Forward(
 			proxyURL = account.Proxy.URL()
 		}
 
+		replaceManagedFileWire(upstreamReq, body)
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
@@ -1155,7 +1192,7 @@ func (s *OpenAIGatewayService) Forward(
 			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			policyRejected := isBPSRequestPolicyRejection(resp.StatusCode, resp.Header, respBody)
+			policyRejected := IsManagedFileGeneration(ctx) || isBPSRequestPolicyRejection(resp.StatusCode, resp.Header, respBody)
 
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -1292,7 +1329,7 @@ func (s *OpenAIGatewayService) Forward(
 		if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
-				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
+				if signal, ok := asOpenAICompactFallbackSignal(err); ok && !IsManagedFileGeneration(ctx) {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 					); retry {
@@ -1349,7 +1386,7 @@ func (s *OpenAIGatewayService) Forward(
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
-				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
+				if signal, ok := asOpenAICompactFallbackSignal(err); ok && !IsManagedFileGeneration(ctx) {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 					); retry {
@@ -1659,6 +1696,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 侧信道：按真客户端节奏补一条只读 GET settings/user（openai_codex_side_calls.go）。
 	// 异步执行，读已定稿的身份头，不改本请求。
+	prepareManagedFileGenerationRequest(req)
 	s.scheduleCodexSideCalls(c, account, req)
 	return req, nil
 }

@@ -306,7 +306,14 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	geminiCachedContentRepository := repository.NewGeminiCachedContentRepository(db)
 	geminiCachedContentService := service.ProvideGeminiCachedContentService(geminiCachedContentRepository, geminiMessagesCompatService, configConfig)
 	gatewayHandler := handler.ProvideGatewayHandler(gatewayService, openAIGatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, coordinator, geminiCachedContentService)
-	openAIGatewayHandler := handler.ProvideOpenAIGatewayHandler(openAIGatewayService, pluginManager, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, grokQuotaService, configConfig, coordinator, compositeRouteResolver)
+	fileRepository := repository.ProvideFileRepositoryWithManagedLifecycle(db)
+	fileService, err := service.ProvideFileService(fileRepository, configConfig)
+	if err != nil {
+		return nil, err
+	}
+	managedFileRepository := repository.ProvideManagedFileRepository(db)
+	managedFileResolver := service.NewManagedFileResolver(fileService, managedFileRepository, httpUpstream, configConfig)
+	openAIGatewayHandler := handler.ProvideOpenAIGatewayHandler(openAIGatewayService, pluginManager, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, grokQuotaService, configConfig, coordinator, compositeRouteResolver, managedFileResolver)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	totpHandler := handler.NewTotpHandler(totpService)
 	passkeyRepository := repository.NewPasskeyRepository(db)
@@ -332,11 +339,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	batchImageDownloadService := service.NewBatchImageDownloadService(batchImageRepository, accountRepository, batchImageDownloadLimiter, configConfig)
 	batchImageCleanupService := service.ProvideBatchImageCleanupService(batchImageRepository, accountRepository, configConfig)
 	batchImageHandler := handler.ProvideBatchImageHandler(batchImagePublicService, batchImageDownloadService, batchImageCleanupService, openAIGatewayHandler)
-	fileRepository := repository.NewFileRepository(db)
-	fileService, err := service.ProvideFileService(fileRepository, configConfig)
-	if err != nil {
-		return nil, err
-	}
 	fileHandler := handler.NewFileHandler(fileService)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
 	openAIQuotaAutoResetService := service.ProvideOpenAIQuotaAutoResetService(accountRepository, openAIQuotaService, rateLimitService, idempotencyCoordinator, auditLogService, settingService, leaderLockCache)

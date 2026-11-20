@@ -2193,6 +2193,9 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
+	if requiredCapability == OpenAIEndpointCapabilityBPSFiles {
+		return s.selectAccountWithSchedulerOnce(ctx, groupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+	}
 	if _, ok := ctx.Value(gatewayPoolGroupLimitsKey{}).(*gatewayPoolGroupLimits); !ok {
 		ctx = context.WithValue(ctx, gatewayPoolGroupLimitsKey{}, &gatewayPoolGroupLimits{})
 	}
@@ -2445,9 +2448,12 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	if requiredImageCapability == "" {
 		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	}
+	if candidatePass, _ := ctx.Value(managedFileCandidatePassKey{}).(bool); requiredCapability == OpenAIEndpointCapabilityBPSFiles && !candidatePass {
+		return s.selectManagedFileAccount(ctx, groupID, requestedModel, excludedIDs)
+	}
 	strongBinding := (strings.TrimSpace(previousResponseID) != "" && !previousResponseCanMove) ||
 		s.resolveOpenAIGuardianParentAccountID(ctx, groupID) > 0
-	if !strongBinding {
+	if !strongBinding && requiredCapability != OpenAIEndpointCapabilityBPSFiles {
 		ctx = s.withGatewayPoolAccountPreferences(ctx, OpenAIAccountScheduleRequest{
 			GroupID: groupID, Platform: platform, RequestedModel: requestedModel,
 			SessionHash: sessionHash,
