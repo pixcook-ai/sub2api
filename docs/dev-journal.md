@@ -142,3 +142,28 @@ TDD 首先复现快照缺少工具合同，再复现启动参数缺少 `--tool-c
 `7f0ac9e5c` 提供受控 URL 下载器：逐次 DNS/连接/跳转校验、流式字节和组合预算、取消/失败清理。普通组合、定向 service 与 race 各151项通过、零失败或跳过；证据索引 `/tmp/bps-file-url12-final-handoff.md`。URL/public ID/inline 的 full-index 暂存与 recovery 集成已提交 `6431a1669`，174项相关回归及23项race均通过，零失败或跳过（`/tmp/bps-url-public-integration-final.jsonl`、`/tmp/bps-url-public-integration-race.jsonl`），独立双审无P1/P2，五文件冻结哈希一致。
 
 gateway `ff30f0d` / `37acec4` 已登记客户端 tool_search 与 metadata recovery 双 SDK 场景，`0675b35` 增加内联/混合附件场景；登记或 fixture 通过不能替代最终公开链路。下一验收必须从干净的两个提交构建，使用 launcher 自建隔离 PG/Redis，运行全部124个官方 Python/JavaScript SDK 场景并回读 usage/ledger/balance/lease 及原生上传/生成计数。旧86项中84通过、2项DELETE失败的报告仅为历史证据，不继承为当前候选通过。真实 BPS 文档阅读、搜索、远端删除/产物及续接能力门保持独立；未调用真实 BPS、推送、部署或关闭 Issue。
+
+## 2026-11-20 — 1836 SDK/PG 验收与来源归档缺口
+
+固定 main `71879e98411947748078cbf95c49effff7ea0740` / gateway `1ba185fdec438e18d77f032239531c6075ce0d7d`，两仓均从干净工作树由 launcher 构建，`source_provenance_verified=true`。全新 1836 marker 与隔离 PostgreSQL/Redis 上，官方 Python SDK 3.55.1（62 场景）及 JavaScript SDK 7.60.0（62 场景）经同一个主仓 base_url、实际鉴权与调度、gateway、本地假 BPS，一次完整运行 **124/124 PASS、零失败或跳过**；supported_baseline / all_selected 均 passed，10 个所选协议 gate 均通过。包括本地 Files DELETE、Stored Responses 生命周期、14 个内联/混合附件场景、6 个同身份恢复场景、4 个客户端 auto tool_search 三轮场景。
+
+原始 report SHA256 `5763ab607a33c7d3f804438982e81a9a5289d224aa666903fef5dec533b4314b`；该轮临时脱敏摘要仅作私有历史留存，不作为最终入库来源证据。独立 PostgreSQL 回读固定于 2026-11-20T10:42:30.986483Z，66 个要求关联的案例全部通过：24 次公共 upload 与6次 recovery、14次 inline operation 全 succeeded，10个 Stored 记录全为删除墓碑；164条 usage 无重复，总 actual_cost=0.0412400000，测试用户余额100−0.04124=99.95876000精确一致，全部活动租约及未完成操作均为0。16个 failure/incomplete/annotations 案例通过同条安全日志的 request_id→client_request_id 精确关联；6个已清理记录保留的未过期 cleanup_token 按实际源码定义为完成后的幂等围栏，原始时间字段与最初失败评估完整保留在 assessment_history，未通过修改数据库消除失败。独立 Spec/Standards 最终复核均无剩余或新增 P1/P2，分别35/112项离线断言通过；未将本地 SQL 事实扩大为真实 BPS、未执行的物理文件系统验收或两个 Files DELETE 案例的逐项 PG 关联。
+
+本轮修正只涉及 gateway 验收夹具：完整 manifest 读上限 1 MiB（控制文件仍 64 KiB），macOS `Python` 解释器精确识别，以及 native fake 对 SDK user.content 字符串工具搜索 marker 的识别。旧 49 项前缀阻塞及 recovery/search 诊断失败保留为历史，不能与本轮结果拼接。
+
+124 矩阵没有独立 URL 输入场景；额外纯 URL 公开入口首次补验返回503：原生夹具已有346,031,074 bytes，而512MiB总预算按每次200MiB预留，导致下一次上传在正文前被507拒绝，经gateway映射到主仓503；无新增成功上传/生成。此为本地夹具容量边界，不修改生产下载器或放宽限制；另用全新隔离夹具补验，不能由124全绿推导 URL SDK 已通过。真实 BPS、完整22票、required/forced/allowed_tools、工具来源文件、previous_response_id、跨后端迁移及原始 SSE 尾帧等门保持各自边界；未推送、部署或关闭 Issue。
+
+
+## 2026-11-20 — 1908 最终源码归档与独立 URL 补验
+
+1836 运行确实完成124项SDK与66项PG关联，但启动器清理时删除了未归档的原始manifest，独立两轴各保留一个P2来源缺口。没有重造原文件或把自述当原始来源；保留其原始report/PG及失败历史后，用全新1908 marker和隔离数据库从相同干净源码重新构建、重跑。两轮数字不相加。
+
+最终被测源码仍为 main `71879e98411947748078cbf95c49effff7ea0740` / gateway `1ba185fdec438e18d77f032239531c6075ce0d7d`。1908原manifest在清理前已以0600私有原字节归档，逐字节相等，SHA256 `4098ab8a0665f7c2b1743d7315c4d78800608f47fbbb10e3f830a0e8f88d1903`；敏感路径不入库。两仓source_clean、launcher-built和source_provenance_verified均成立。官方Python3.55.1与JavaScript7.60.0分别62项，一次完整124/124 PASS，零失败或跳过，10个所选协议gate通过。原始report SHA256 `93f781c694def1b6f3043a38dee3bb7f9474aa62d99075fbdac5cf6a133908c3`。
+
+1908 PostgreSQL只读快照固定于 `2026-11-20T11:14:39.235252Z`：66/66要求关联的案例通过；164条usage无重复，总实际成本0.04124，余额从100到99.95876精确吻合。公共账本24个upload和6个recovery全成功，14个inline operation全成功，10个Stored记录为内容和预算均已释放的删除墓碑；全部活动upload/cleanup/binding/read/inline/stored租约为0。6个原始未到期cleanup token仍作为已完成清理的幂等围栏完整保留；16组failure/incomplete/annotations的外层请求ID→client ID→usage精确桥接，不以每group计数代替。协议、来源和实际账本合并的脱敏证据为 `docs/verification/bps-sdk-20261120-1908.json`；独立两轴最终复核仍以其冻结文件为准。
+
+URL使用另一个1858隔离实例补验，不混入124矩阵：官方双SDK各完成纯URL、URL+公共file ID+inline混合、私网URL400拒绝，合计6个步骤通过。RFC2606正文实际下载并上传8008bytes，SHA256 `b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0`，每SDK原生4次上传和2次生成，按原始输入顺序精确核对native IDs。a2范围PG关联2个公共文件/2个public operation、4个released inline request/6个inline operation及4条usage，活动租约为0；该实例全账本（含a1诊断）的实际成本0.0015，余额99.9985。原始manifest与0600归档逐字节一致。独立补验和PG证据为 `docs/verification/bps-url-sdk-20261120-1858.json`。
+
+URL历史诊断完整保留：1836额外请求因native夹具330MiB留存加200MiB预留超过512MiB总量而507→502→503；1858 a1请求实际成功，但补验脚本误认上传传输顺序，修正为验证最终文档顺序后在独立a2 key范围重跑。没有改生产下载器、放宽SSRF/容量或抹去a1残留来制造通过。URL仅覆盖本次JSON、指定公共文本源与一个私网地址拒绝，不代表任意URL/SSE/全部SSRF分支或真实BPS理解。
+
+本次证据不验证物理文件系统清理、未来TTL sweep或两个Files DELETE案例的逐例PG关联。Stored仍为本地纯文本生命周期；客户端auto tool_search不等于网页搜索；同身份metadata recovery不等于跨后端迁移。required/forced/allowed_tools、工具来源文件、previous_response_id及跨后端迁移仍有实质缺口；真实BPS文档、搜索、产物与远端删除门未通过。未执行真实BPS、推送、部署、生产配置变更或Issue关闭。
