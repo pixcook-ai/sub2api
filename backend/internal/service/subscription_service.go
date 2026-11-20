@@ -779,6 +779,12 @@ func (s *SubscriptionService) GetActiveSubscription(ctx context.Context, userID,
 	return &cp, nil
 }
 
+// GetForFilePublication bypasses the hot-path cache when a long upload is
+// about to become visible under its current subscription authorization.
+func (s *SubscriptionService) GetForFilePublication(ctx context.Context, userID, groupID int64) (*UserSubscription, error) {
+	return s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, userID, groupID)
+}
+
 // ListUserSubscriptions 获取用户的所有订阅
 func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID int64) ([]UserSubscription, error) {
 	subs, err := s.userSubRepo.ListByUserID(ctx, userID)

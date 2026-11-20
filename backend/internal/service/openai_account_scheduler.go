@@ -1782,7 +1782,26 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 // request, and when it cannot, names the veto point. The reason feeds
 // openAISelectionFilterStats so that "no available accounts" errors state why
 // each candidate was dropped instead of failing silently (#4599).
+type openAIAccountCompatibilityChecks struct {
+	runtimeBlocked    func(*Account, string) bool
+	channelRestricted func(*Account, OpenAIAccountScheduleRequest) bool
+}
+
 func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) (bool, string) {
+	checks := openAIAccountCompatibilityChecks{}
+	if s != nil && s.service != nil {
+		checks.runtimeBlocked = s.service.isOpenAIAccountRequestRuntimeBlocked
+		checks.channelRestricted = func(account *Account, req OpenAIAccountScheduleRequest) bool {
+			return req.GroupID != nil && s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
+				s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact)
+		}
+	}
+	return s.isAccountRequestCompatibleReasonWithChecks(ctx, account, req, checks)
+}
+
+// The diagnostic path supplies read-only runtime/channel snapshots while sharing
+// all remaining request policy with ordinary selection.
+func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReasonWithChecks(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest, checks openAIAccountCompatibilityChecks) (bool, string) {
 	if account == nil {
 		return false, "account_nil"
 	}
@@ -1794,7 +1813,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if req.RequirePrivacySet && !account.IsPrivacySet() {
 		return false, "privacy_not_set"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
+	if checks.runtimeBlocked != nil && checks.runtimeBlocked(account, req.RequestedModel) {
 		return false, "runtime_blocked"
 	}
 	// 模型级限流（spark 429）也要在主过滤就排掉：否则停着的账号挤占 TopK 名额，
@@ -1830,9 +1849,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if req.RequestedModel != "" && !supportsOpenAIRequestModel(account, req.RequestedModel, req.RequireCompact) {
 		return false, "model_not_supported"
 	}
-	if req.GroupID != nil && s != nil && s.service != nil &&
-		s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
-		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
+	if checks.channelRestricted != nil && checks.channelRestricted(account, req) {
 		return false, "channel_upstream_restricted"
 	}
 	if !accountSupportsOpenAICapabilities(account, req.RequiredCapability, req.RequiredImageCapability) {
@@ -2193,6 +2210,9 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
+	if requiredCapability == OpenAIEndpointCapabilityBPSFiles {
+		return s.selectAccountWithSchedulerOnce(ctx, groupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+	}
 	if _, ok := ctx.Value(gatewayPoolGroupLimitsKey{}).(*gatewayPoolGroupLimits); !ok {
 		ctx = context.WithValue(ctx, gatewayPoolGroupLimitsKey{}, &gatewayPoolGroupLimits{})
 	}
@@ -2445,9 +2465,12 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	if requiredImageCapability == "" {
 		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	}
+	if candidatePass, _ := ctx.Value(managedFileCandidatePassKey{}).(bool); requiredCapability == OpenAIEndpointCapabilityBPSFiles && !candidatePass {
+		return s.selectManagedFileAccount(ctx, groupID, requestedModel, excludedIDs)
+	}
 	strongBinding := (strings.TrimSpace(previousResponseID) != "" && !previousResponseCanMove) ||
 		s.resolveOpenAIGuardianParentAccountID(ctx, groupID) > 0
-	if !strongBinding {
+	if !strongBinding && requiredCapability != OpenAIEndpointCapabilityBPSFiles {
 		ctx = s.withGatewayPoolAccountPreferences(ctx, OpenAIAccountScheduleRequest{
 			GroupID: groupID, Platform: platform, RequestedModel: requestedModel,
 			SessionHash: sessionHash,

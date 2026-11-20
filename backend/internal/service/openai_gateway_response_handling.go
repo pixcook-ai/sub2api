@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
 	usage            *OpenAIUsage
+	usageReported    bool
 	firstTokenMs     *int
 	firstAnswerMs    *int
 	responseID       string
@@ -165,6 +167,35 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 
 	usage := &OpenAIUsage{}
+	usageReported := false
+	bpsSafeUsage := &OpenAIUsage{}
+	bpsSafeUsageReported := false
+	parseUsage := func(data []byte, eventType string) {
+		if hasBPSFailureContract(account, resp.Header) {
+			// Settle exactly the same bounded public counters as the translated
+			// envelope exposes; one valid field cannot bless an invalid sibling.
+			selected := gjson.GetBytes(data, "usage")
+			if !selected.IsObject() {
+				selected = gjson.GetBytes(data, "response.usage")
+			}
+			if safe := safeOpenAIFailureUsage(selected); safe != nil {
+				encoded, err := json.Marshal(map[string]any{"usage": safe})
+				if err == nil {
+					parsed, _, reported := extractOpenAIUsageFromJSONBytesWithReport(encoded)
+					mergeOpenAIUsageNonZero(bpsSafeUsage, parsed)
+					bpsSafeUsageReported = bpsSafeUsageReported || reported
+				}
+			}
+			if bpsStreamingFailure(account, resp, data) {
+				*usage = *bpsSafeUsage
+				usageReported = bpsSafeUsageReported
+				return
+			}
+		}
+		if s.parseSSEUsageBytesWithType(data, eventType, usage) {
+			usageReported = true
+		}
+	}
 	imageCounter := newOpenAIImageOutputCounter()
 	responseID := ""
 	var firstOutputScanGuard atomic.Bool
@@ -362,6 +393,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
 			usage:            usage,
+			usageReported:    usageReported,
 			firstTokenMs:     firstFrame.ms,
 			firstAnswerMs:    firstAnswer.ms,
 			responseID:       responseID,
@@ -531,6 +563,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
 			eventType := effectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
+			normalizedBareError := false
+			if normalized, ok := normalizeBPSBareError(account, resp, dataBytes); ok {
+				dataBytes = normalized
+				data = string(normalized)
+				eventType = "response.failed"
+				pendingSSEEventType = eventType
+				normalizedBareError = true
+				line = "data: " + data
+				suppressCurrentEvent = false
+			}
 			if keepaliveEventDirect || forwardsKeepaliveDirect(eventType) {
 				keepaliveEventDirect = true
 				eventInProgress = true
@@ -574,7 +616,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				capacityFailoverSuppressedLogged = true
 			}
 			cyberHit := false
-			if eventType == "response.failed" || eventType == "error" {
+			if eventType == "response.failed" || eventType == "error" || eventType == "response.cancelled" && hasBPSFailureContract(account, resp.Header) {
 				if codexFailureTerminal && eventType == "error" {
 					sawBareError = true
 					bareErrorPayload = append(bareErrorPayload[:0], dataBytes...)
@@ -589,7 +631,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				// response.failed 自带上游已消耗的 usage（input token 通常已扣）；必须先解析
 				// 再打 cyber 标记，否则 mark 记到的是解析前的 0，导致流式 cyber 按 0 token 计费
 				// 而漏记真实用量。对齐 WS V2 / Chat 流式路径（均先解析 usage 再 Mark）。
-				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
+				parseUsage(dataBytes, eventType)
 				if hit, code, msg := detectOpenAICyberPolicy(dataBytes); hit {
 					cyberHit = true
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
@@ -601,7 +643,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						UpstreamOutTok: usage.OutputTokens,
 					})
 				}
-				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				// A validated translated terminal must stay on this stream even
+				// before semantic text; ordinary unmarked failures keep failover.
+				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted) || bpsStreamingFailure(account, resp, dataBytes)
 				if !outputStarted && !cyberHit {
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						sawFailedEvent = true
@@ -759,6 +803,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return
 			}
 
+			// Payload restoration/stamping above can rebuild the data line.
+			// Append the authoritative event field last so upstream event:error
+			// cannot make the JS SDK throw instead of observing this terminal.
+			if normalizedBareError {
+				line = "event: response.failed\n" + line
+			}
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
@@ -783,7 +833,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				stopFirstOutputTimer()
 			}
 			firstAnswer.observe(data, eventType, startTime)
-			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
+			parseUsage(dataBytes, eventType)
 			return
 		}
 
@@ -1312,28 +1362,48 @@ func (s *OpenAIGatewayService) parseSSEUsageBytes(data []byte, usage *OpenAIUsag
 	s.parseSSEUsageBytesWithType(data, "", usage)
 }
 
-func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType string, usage *OpenAIUsage) {
+func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType string, usage *OpenAIUsage) bool {
 	if usage == nil || len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("[DONE]")) {
-		return
+		return false
 	}
 	// Usage is absent from nearly every delta event. Avoid full JSON validation
 	// and four gjson path scans on that hot path while retaining progressive
 	// usage from compatible upstreams on any event type.
 	if !bytes.Contains(data, []byte(`"usage"`)) {
-		return
+		return false
 	}
-	parsedUsage, ok := extractOpenAIUsageFromJSONBytes(data)
+	parsedUsage, ok, reported := extractOpenAIUsageFromJSONBytesWithReport(data)
 	if !ok {
-		return
+		return false
 	}
 	if openAIStreamEventTypeIsTerminal(effectiveOpenAISSEEventType(data, eventType)) {
 		if !openAIUsageHasTokens(&parsedUsage) && openAIUsageHasTokens(usage) {
-			return
+			return reported
 		}
 		*usage = parsedUsage
-		return
+		return reported
 	}
 	mergeOpenAIUsageNonZero(usage, parsedUsage)
+	return reported
+}
+
+// An empty usage object is accepted by legacy parsing but is not evidence of
+// reported zero consumption. Keep that distinction for partial error results.
+func openAIUsageHasReportedCount(usage gjson.Result) bool {
+	for _, field := range []string{
+		"input_tokens", "prompt_tokens", "output_tokens", "completion_tokens",
+		"cache_creation_input_tokens", "cache_read_input_tokens", "cache_read_tokens", "cached_tokens", "prompt_cache_hit_tokens",
+		"input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens",
+		"input_tokens_details.image_tokens", "prompt_tokens_details.image_tokens",
+		"output_tokens_details.image_tokens", "completion_tokens_details.image_tokens",
+		"output_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens",
+	} {
+		count := usage.Get(field)
+		if validOpenAIFailureCount(count) {
+			return true
+		}
+	}
+	return false
 }
 
 // Compatible Responses upstreams may report usage before the terminal event.
@@ -1440,8 +1510,13 @@ func logOpenAISuccessMissingUsage(ctx context.Context, c *gin.Context, account *
 }
 
 func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
+	usage, ok, _ := extractOpenAIUsageFromJSONBytesWithReport(body)
+	return usage, ok
+}
+
+func extractOpenAIUsageFromJSONBytesWithReport(body []byte) (OpenAIUsage, bool, bool) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return OpenAIUsage{}, false
+		return OpenAIUsage{}, false, false
 	}
 	// 部分 OpenAI 兼容上游（例如 Cline API）会将标准响应包在 data 字段中：
 	// {"data":{"choices": [...], "usage": {...}}, "success":true}。
@@ -1457,12 +1532,13 @@ func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 		{usagePath: "data.response.usage", imageUsagePath: "data.response.tool_usage.image_gen"},
 	}
 	for _, candidate := range candidates {
-		if usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, candidate.usagePath)); ok {
+		usageObject := gjson.GetBytes(body, candidate.usagePath)
+		if usage, ok := openAIUsageFromGJSON(usageObject); ok {
 			mergeHostedImageGenToolUsage(gjson.GetBytes(body, candidate.imageUsagePath), &usage)
-			return usage, true
+			return usage, true, openAIUsageHasReportedCount(usageObject)
 		}
 	}
-	return OpenAIUsage{}, false
+	return OpenAIUsage{}, false, false
 }
 
 // openAIResponsesCompletedEventIsEmpty reports whether a response.completed /
@@ -2028,7 +2104,7 @@ func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, sou
 
 func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string, clientOutputStarted bool) ([]byte, bool) {
 	eventType = strings.TrimSpace(eventType)
-	isFailedEvent := eventType == "response.failed"
+	isFailedEvent := eventType == "response.failed" || eventType == "response.cancelled"
 	if (!isFailedEvent && eventType != "error") || len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return payload, false
 	}
@@ -2068,8 +2144,6 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 	}
 	for _, path := range []string{
 		"response.instructions",
-		"response.output",
-		"response.usage",
 		"response.metadata",
 		"response.reasoning",
 		"response.tools",
@@ -2086,7 +2160,67 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 		}
 		updated = next
 	}
+
+	// Failure output is intentionally empty, while numeric usage is protocol
+	// evidence already parsed for settlement. Keep only public count fields.
+	var err error
+	updated, err = sjson.SetBytes(updated, "response.output", []any{})
+	if err != nil {
+		return payload, false
+	}
+	if usage := safeOpenAIFailureUsage(gjson.GetBytes(payload, "response.usage")); usage != nil {
+		updated, err = sjson.SetBytes(updated, "response.usage", usage)
+	} else {
+		updated, err = sjson.DeleteBytes(updated, "response.usage")
+	}
+	if err != nil {
+		return payload, false
+	}
 	return updated, !bytes.Equal(updated, payload)
+}
+
+// safeOpenAIFailureUsage exposes observed standard counts without forwarding
+// arbitrary upstream diagnostic objects or fabricating unknown zero values.
+func safeOpenAIFailureUsage(value gjson.Result) map[string]any {
+	if !value.IsObject() {
+		return nil
+	}
+	result := make(map[string]any)
+	copyCount := func(source gjson.Result, field string, dest map[string]any) {
+		count := source.Get(field)
+		if validOpenAIFailureCount(count) {
+			dest[field] = json.RawMessage(count.Raw)
+		}
+	}
+	for _, field := range []string{"input_tokens", "output_tokens", "total_tokens"} {
+		copyCount(value, field, result)
+	}
+	for field, child := range map[string]string{"input_tokens_details": "cached_tokens", "output_tokens_details": "reasoning_tokens"} {
+		details := make(map[string]any)
+		copyCount(value.Get(field), child, details)
+		if len(details) > 0 {
+			result[field] = details
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// Exact arithmetic prevents fractional large numbers from rounding into counts.
+func validOpenAIFailureCount(count gjson.Result) bool {
+	if count.Type != gjson.Number || len(count.Raw) > 64 {
+		return false
+	}
+	if index := strings.IndexAny(count.Raw, "eE"); index >= 0 {
+		exponent, err := strconv.Atoi(count.Raw[index+1:])
+		if err != nil || exponent < -324 || exponent > 308 {
+			return false
+		}
+	}
+	exact, ok := new(big.Rat).SetString(count.Raw)
+	return ok && exact.IsInt() && exact.Sign() >= 0 && exact.Num().Cmp(big.NewInt(9007199254740991)) <= 0
 }
 
 func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.Response, c *gin.Context, message string) error {

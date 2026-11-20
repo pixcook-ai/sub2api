@@ -22,7 +22,8 @@ func Headers(source http.Header) http.Header {
 		lower := strings.ToLower(key)
 		if strings.Contains(lower, "authorization") || strings.Contains(lower, "api-key") ||
 			strings.Contains(lower, "apikey") || strings.Contains(lower, "secret") ||
-			strings.HasSuffix(lower, "-token") || strings.HasSuffix(lower, "_token") {
+			strings.HasSuffix(lower, "-token") || strings.HasSuffix(lower, "_token") ||
+			lower == "x-bps-service-key" || lower == "x-bps-file-admission" || lower == "x-bps-file-binding" {
 			out[key] = []string{"[redacted]"}
 			continue
 		}

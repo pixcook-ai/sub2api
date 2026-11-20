@@ -190,10 +190,55 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 			sub, err := subscriptionService.GetActiveSubscription(c.Request.Context(), apiKey.User.ID, apiKey.Group.ID)
+			if err != nil && !errors.Is(err, service.ErrSubscriptionNotFound) {
+				AbortWithError(c, http.StatusServiceUnavailable, "SUBSCRIPTION_AUTH_UNAVAILABLE", "Group authorization is temporarily unavailable")
+				return
+			}
 			if err != nil || sub == nil || !sub.IsActive() {
 				AbortWithError(c, http.StatusForbidden, "SUBSCRIPTION_NOT_FOUND", "No active subscription authorizes this group")
 				return
 			}
+		}
+		if filesRequest && c.Request.Method == http.MethodPost {
+			// A long upload must not publish under credentials revoked while its
+			// body was streaming. This bypasses the authentication cache.
+			c.Set(fileUploadReauthorizeKey, func(check context.Context) error {
+				fresh, err := apiKeyService.GetForFilePublication(check, apiKeyString)
+				if err != nil {
+					if errors.Is(err, service.ErrAPIKeyNotFound) {
+						return service.ErrFileAuthorizationRevoked
+					}
+					return service.ErrFileAuthorizationUnavailable
+				}
+				if fresh == nil || fresh.ID != apiKey.ID || fresh.UserID != apiKey.UserID || fresh.GroupID == nil || apiKey.GroupID == nil || *fresh.GroupID != *apiKey.GroupID || fresh.User == nil || !fresh.User.IsActive() || (fresh.Status != service.StatusActive && fresh.Status != service.StatusAPIKeyQuotaExhausted) || fresh.IsExpired() {
+					return service.ErrFileAuthorizationRevoked
+				}
+				if _, _, ok := validateAPIKeyGroupAvailable(fresh); !ok {
+					return service.ErrFileAuthorizationRevoked
+				}
+				if !validateAPIKeyGroupAllowed(fresh) || fresh.Group == nil || fresh.Group.Platform != service.PlatformOpenAI {
+					return service.ErrFileAuthorizationRevoked
+				}
+				if len(fresh.IPWhitelist) > 0 || len(fresh.IPBlacklist) > 0 {
+					allowed, _ := ip.CheckIPRestrictionWithCompiledRules(ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL()), fresh.CompiledIPWhitelist, fresh.CompiledIPBlacklist)
+					if !allowed {
+						return service.ErrFileAuthorizationRevoked
+					}
+				}
+				if fresh.Group.IsSubscriptionType() {
+					if subscriptionService == nil {
+						return service.ErrFileAuthorizationUnavailable
+					}
+					sub, err := subscriptionService.GetForFilePublication(check, fresh.UserID, *fresh.GroupID)
+					if err != nil && !errors.Is(err, service.ErrSubscriptionNotFound) {
+						return service.ErrFileAuthorizationUnavailable
+					}
+					if err != nil || sub == nil || !sub.IsActive() {
+						return service.ErrFileAuthorizationRevoked
+					}
+				}
+				return nil
+			})
 		}
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
@@ -316,6 +361,17 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 	}
 }
 
+const fileUploadReauthorizeKey = "files_upload_reauthorize"
+
+func FileUploadReauthorize(c *gin.Context) func(context.Context) error {
+	value, ok := c.Get(fileUploadReauthorizeKey)
+	if !ok {
+		return nil
+	}
+	check, _ := value.(func(context.Context) error)
+	return check
+}
+
 func apiKeyHeadersTooLarge(c *gin.Context) bool {
 	if c == nil {
 		return false
@@ -364,6 +420,9 @@ func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 }
 
 func isFileManagementRequest(method, path string) bool {
+	if method == http.MethodGet && path == "/v1/files" {
+		return true
+	}
 	if method == http.MethodPost {
 		return path == "/v1/files"
 	}

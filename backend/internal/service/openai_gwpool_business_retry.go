@@ -96,6 +96,15 @@ func gatewayPoolInferenceURL(u *url.URL) bool {
 // verification; failed attempts can therefore be replaced without splicing
 // streams or leaking a discarded response's IDs, state or tool calls.
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (response *http.Response, responseErr error) {
+	if request != nil && IsManagedFileGeneration(request.Context()) {
+		if err := claimManagedFileGeneration(request.Context(), account.ID); err != nil {
+			return nil, err
+		}
+		if _, err := BPSFilesConfigForAccount(account); err != nil {
+			return nil, ErrManagedFileNotReady
+		}
+		return s.doOpenAIUpstreamRoundTrip(request, proxyURL, account)
+	}
 	pool := request != nil && account.UsesGatewayPool() && gatewayPoolInferenceURL(request.URL)
 	if !pool {
 		if request != nil && account.qualityGuardEnabled() && gatewayPoolInferenceURL(request.URL) {

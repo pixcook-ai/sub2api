@@ -782,6 +782,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		s.openAIQuotaAutoPauseSettingsCache.Store(&cachedOpenAIQuotaAutoPauseSettings{
 			settings:  cached.settings,
 			expiresAt: 0,
+			complete:  cached.complete,
 		})
 	}
 	accountSchedulingThresholdsSF.Forget(SettingKeyAccountSchedulingThresholds)
@@ -793,6 +794,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		accountSchedulingThresholdsCache.Store(&cachedAccountSchedulingThresholds{
 			thresholds: cloneAccountSchedulingThresholds(normalizedThresholds),
 			expiresAt:  time.Now().Add(accountSchedulingThresholdsCacheTTL).UnixNano(),
+			complete:   err == nil,
 		})
 	} else {
 		// Partial/omitted payload: clear cache so the next hot-path read reloads from DB.

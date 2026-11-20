@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
 	"strconv"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -26,11 +28,68 @@ func fileOwner(c *gin.Context) (service.FileOwner, bool) {
 	return service.FileOwner{UserID: key.UserID, APIKeyID: key.ID, GroupID: *key.GroupID}, true
 }
 func fileObject(f *service.StoredFile) gin.H {
-	return gin.H{"id": f.PublicID, "object": "file", "bytes": f.Bytes, "created_at": f.CreatedAt.Unix(), "filename": f.Filename, "purpose": f.Purpose}
+	obj := gin.H{"id": f.PublicID, "object": "file", "bytes": f.Bytes, "created_at": f.CreatedAt.Unix(), "filename": f.Filename, "purpose": f.Purpose}
+	if f.ExpiresAt != nil {
+		obj["expires_at"] = f.ExpiresAt.Unix()
+	}
+	return obj
+}
+func (h *FileHandler) List(c *gin.Context) {
+	owner, ok := fileOwner(c)
+	if !ok {
+		return
+	}
+	query := c.Request.URL.Query()
+	for name, values := range query {
+		if len(values) != 1 || (name != "after" && name != "purpose" && name != "order" && name != "limit") {
+			fileError(c, 400, "invalid_request_error", "Invalid file list parameter", "invalid_request_error")
+			return
+		}
+	}
+	q := service.FileListQuery{After: query.Get("after"), Purpose: query.Get("purpose"), Order: "desc", Limit: 10000}
+	if _, present := query["after"]; present && q.After == "" {
+		fileError(c, 400, "invalid_request_error", "Invalid file cursor", "invalid_cursor")
+		return
+	}
+	if value, present := query["order"]; present {
+		q.Order = value[0]
+		if q.Order == "" {
+			fileError(c, 400, "invalid_request_error", "Invalid order", "invalid_request_error")
+			return
+		}
+	}
+	if value, present := query["limit"]; present {
+		n, err := strconv.Atoi(value[0])
+		if err != nil || n < 1 || n > 10000 {
+			fileError(c, 400, "invalid_request_error", "Invalid limit", "invalid_request_error")
+			return
+		}
+		q.Limit = n
+	}
+	page, err := h.files.List(c.Request.Context(), owner, q)
+	if err != nil {
+		handleFileError(c, err)
+		return
+	}
+	data := make([]gin.H, 0, len(page.Files))
+	for _, f := range page.Files {
+		data = append(data, fileObject(f))
+	}
+	var first, last *string
+	if len(page.Files) > 0 {
+		first = &page.Files[0].PublicID
+		last = &page.Files[len(page.Files)-1].PublicID
+	}
+	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data, "first_id": first, "last_id": last, "has_more": page.HasMore})
 }
 func (h *FileHandler) Upload(c *gin.Context) {
 	owner, ok := fileOwner(c)
 	if !ok {
+		return
+	}
+	key, _ := middleware.GetAPIKeyFromContext(c)
+	if key.Group == nil || key.Group.Platform != service.PlatformOpenAI {
+		fileError(c, http.StatusForbidden, "permission_denied", "File uploads require an OpenAI group", "unsupported_file_platform")
 		return
 	}
 	reader, err := c.Request.MultipartReader()
@@ -38,8 +97,19 @@ func (h *FileHandler) Upload(c *gin.Context) {
 		fileError(c, 400, "invalid_request_error", "Expected multipart/form-data")
 		return
 	}
-	f, err := h.files.UploadMultipart(c.Request.Context(), owner, reader)
+	uploadCtx, cancel := context.WithTimeout(c.Request.Context(), h.files.UploadTimeout())
+	defer cancel()
+	stop, err := httputil.BindRequestBodyReadDeadline(c.Writer, c.Request, uploadCtx)
 	if err != nil {
+		fileError(c, 503, "server_error", "Bounded upload transport is unavailable", "file_storage_unavailable")
+		return
+	}
+	defer stop()
+	f, err := h.files.UploadMultipartWithHooks(uploadCtx, owner, reader, service.FileUploadHooks{InterruptRead: cancel, Reauthorize: middleware.FileUploadReauthorize(c)})
+	if err != nil {
+		if errors.Is(uploadCtx.Err(), context.DeadlineExceeded) {
+			err = service.ErrFileUploadDeadline
+		}
 		handleFileError(c, err)
 		return
 	}
@@ -77,23 +147,35 @@ func (h *FileHandler) Content(c *gin.Context) {
 	c.Status(http.StatusOK)
 	_, _ = io.CopyBuffer(c.Writer, reader, make([]byte, 32*1024))
 }
-func fileError(c *gin.Context, status int, kind, message string) {
-	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": kind, "param": nil, "code": nil}})
+func fileError(c *gin.Context, status int, kind, message string, code ...string) {
+	var value any
+	if len(code) > 0 {
+		value = code[0]
+	}
+	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": kind, "param": nil, "code": value}})
 }
 func handleFileError(c *gin.Context, err error) {
 	var bodyTooLarge *http.MaxBytesError
 	switch {
+	case errors.Is(err, service.ErrFileAuthorizationRevoked):
+		fileError(c, 403, "permission_denied", "File upload authorization is no longer valid", "file_authorization_revoked")
+	case errors.Is(err, service.ErrFileUploadDeadline):
+		fileError(c, 408, "timeout_error", "File upload deadline exceeded", "file_upload_timeout")
+	case errors.Is(err, service.ErrFileUploadConcurrency):
+		fileError(c, 429, "rate_limit_error", "Concurrent file upload limit exceeded", "file_upload_concurrency_exceeded")
+	case errors.Is(err, service.ErrFileInvalidCursor):
+		fileError(c, 400, "invalid_request_error", "Invalid file cursor", "invalid_cursor")
 	case errors.Is(err, service.ErrFileNotFound):
-		fileError(c, 404, "invalid_request_error", "File not found")
+		fileError(c, 404, "invalid_request_error", "File not found", "file_not_found")
 	case errors.Is(err, service.ErrFileTooLarge) || errors.As(err, &bodyTooLarge):
-		fileError(c, 413, "invalid_request_error", "File exceeds the configured upload limit")
+		fileError(c, 413, "invalid_request_error", "File exceeds the configured upload limit", "file_too_large")
 	case errors.Is(err, service.ErrInvalidFile):
 		fileError(c, 400, "invalid_request_error", err.Error())
 	case errors.Is(err, service.ErrFileQuotaExceeded) || errors.Is(err, service.ErrFileStorageFull):
-		fileError(c, 429, "storage_quota_exceeded", "File storage capacity is exhausted")
+		fileError(c, 429, "storage_quota_exceeded", "File storage capacity is exhausted", "file_storage_quota_exceeded")
 	case errors.Is(err, service.ErrFileLeaseConflict):
-		fileError(c, 409, "conflict_error", "File operation lease expired; retry the operation")
+		fileError(c, 409, "conflict_error", "File operation lease expired; retry the operation", "file_lease_conflict")
 	default:
-		fileError(c, 500, "server_error", "File storage is temporarily unavailable")
+		fileError(c, 503, "server_error", "File storage is temporarily unavailable", "file_storage_unavailable")
 	}
 }

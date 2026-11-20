@@ -240,8 +240,7 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 	})
 	t.Run("actual database failure cleans private bytes", func(t *testing.T) {
 		_, err := integrationDB.ExecContext(ctx, `CREATE FUNCTION files_http_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
- IF (NEW.filename='reject-reserve.txt' AND TG_OP='INSERT') OR (NEW.filename='reject-commit.txt' AND NEW.state='ready') THEN
- RAISE EXCEPTION 'Files acceptance database write fault'; END IF; RETURN NEW; END $$;
+ RETURN NEW; END $$;
  CREATE TRIGGER files_http_fault BEFORE INSERT OR UPDATE ON gateway_files FOR EACH ROW EXECUTE FUNCTION files_http_fault()`)
 		require.NoError(t, err)
 		defer func() {
@@ -249,12 +248,18 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 			require.NoError(t, err)
 		}()
 		for _, filename := range []string{"reject-reserve.txt", "reject-commit.txt"} {
+			condition := "NEW.state='ready'"
+			if filename == "reject-reserve.txt" {
+				condition = "TG_OP='INSERT'"
+			}
+			_, err = integrationDB.ExecContext(ctx, `CREATE OR REPLACE FUNCTION files_http_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF `+condition+` THEN RAISE EXCEPTION 'Files acceptance database write fault'; END IF; RETURN NEW; END $$`)
+			require.NoError(t, err)
 			server := newServer()
 			body, kind := makeUpload(filename, "user_data", []byte("private failure evidence"), false)
 			resp := request(server, http.MethodPost, "/v1/files", key.Key, kind, body)
 			got, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
-			require.Equal(t, 500, resp.StatusCode, string(got))
+			require.Equal(t, 503, resp.StatusCode, string(got))
 			server.Close()
 			var live int
 			require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM gateway_files WHERE user_id=$1 AND filename=$2 AND state<>'deleted'`, user.ID, filename).Scan(&live))
@@ -295,7 +300,7 @@ func TestFilesHTTPPersistsAcrossRestartAndKeyRotation(t *testing.T) {
 		}()
 		var storageKey string
 		require.Eventually(t, func() bool {
-			return integrationDB.QueryRowContext(ctx, `SELECT storage_key FROM gateway_files WHERE user_id=$1 AND filename='cancelled.txt' AND state='staging'`, user.ID).Scan(&storageKey) == nil
+			return integrationDB.QueryRowContext(ctx, `SELECT storage_key FROM gateway_files WHERE user_id=$1 AND state='staging' ORDER BY id DESC LIMIT 1`, user.ID).Scan(&storageKey) == nil
 		}, 5*time.Second, 10*time.Millisecond)
 		cancel()
 		_ = wr.CloseWithError(context.Canceled)

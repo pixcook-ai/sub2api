@@ -37,6 +37,7 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
+	managedFiles               *service.ManagedFileResolver
 	compositeResolver          *service.CompositeRouteResolver
 	gatewayService             *service.OpenAIGatewayService
 	billingCacheService        *service.BillingCacheService
@@ -698,20 +699,17 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			previousResponseID,
-			sessionHash,
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			requiredCapability,
-			requireCompact,
-			false,
-			!imageIntent,
-			requestPlatform,
-		)
+		var selection *service.AccountSelectionResult
+		var scheduleDecision service.OpenAIAccountScheduleDecision
+		if plan := service.ManagedFilePlanFromContext(c.Request.Context()); plan != nil {
+			selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForManagedFiles(c.Request.Context(), apiKey.GroupID, sessionHash, forwardModel, plan.RequiredAccountID)
+		} else {
+			selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForCapability(
+				c.Request.Context(), apiKey.GroupID, previousResponseID, sessionHash, forwardModel,
+				failedAccountIDs, service.OpenAIUpstreamTransportAny, requiredCapability,
+				requireCompact, false, !imageIntent, requestPlatform,
+			)
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai.account_select_aborted_client_disconnected", zap.Error(err))
@@ -734,7 +732,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 				}
-				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
+				cls := classifyOpenAISelectionAvailabilityFromGin(c, h.gatewayService, apiKey, service.OpenAIAccountScheduleRequest{
+					GroupID: apiKey.GroupID, Platform: requestPlatform, RequestedModel: forwardModel,
+					PreviousResponseID: previousResponseID, SessionHash: sessionHash,
+					RequiredTransport: service.OpenAIUpstreamTransportAny, RequiredCapability: requiredCapability,
+					RequireCompact: requireCompact,
+				}, reqModel)
 				cls = classifySelectionFailureError(err, cls)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -750,7 +753,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
+			cls := classifyOpenAISelectionAvailabilityFromGin(c, h.gatewayService, apiKey, service.OpenAIAccountScheduleRequest{
+				GroupID: apiKey.GroupID, Platform: requestPlatform, RequestedModel: forwardModel,
+				PreviousResponseID: previousResponseID, SessionHash: sessionHash,
+				RequiredTransport: service.OpenAIUpstreamTransportAny, RequiredCapability: requiredCapability,
+				RequireCompact: requireCompact,
+			}, reqModel)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
 			}
@@ -946,7 +954,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					}
 					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
-						h.handleFailoverExhausted(c, failoverErr, true)
+						// Managed no-replay also applies before any response is committed.
+						h.handleFailoverExhausted(c, failoverErr, streamStarted || c.Writer.Written())
 						return
 					}
 					// openAIForwardMayFailover 已确认写出的字节不含语义输出，
@@ -2726,6 +2735,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "invalid JSON payload")
 		return
 	}
+	if h.managedFilesWSUnsupported(firstMessage) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, managedFilesUnsupportedMessage)
+		return
+	}
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
@@ -3224,6 +3237,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			ReasoningEffortMappings:     reasoningEffortMappings,
 			TurnStarted:                 recordTurnStart,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
+				if h.managedFilesWSUnsupported(payload) {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, managedFilesUnsupportedMessage, nil)
+				}
 				c.Set(securityAuditWSTurnContextKey, turn)
 				service.BeginOpsStreamTurn(c, turn)
 				setCyberTurnBody(turn, payload)
@@ -3465,6 +3481,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 		if waitClient != nil {
 			hooks.ClientReadMessage = waitClient.Read
+		}
+		if h.managedFilesEnabled() {
+			hooks.BeforeClientFrame = func(payload []byte) error {
+				if h.managedFilesWSUnsupported(payload) {
+					closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, managedFilesUnsupportedMessage)
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, managedFilesUnsupportedMessage, nil)
+				}
+				return nil
+			}
 		}
 		wsFirstMessage := wsAttemptMessage
 		// 切组/会话失配防护：previous_response_id 未在当前分组命中粘连账号（StickyPreviousHit=false），
@@ -4216,6 +4241,9 @@ func openAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForwa
 
 func openAIForwardMayFailover(c *gin.Context, writerSizeBeforeForward int, failoverErr *service.UpstreamFailoverError) bool {
 	if c == nil || c.Writer == nil {
+		return false
+	}
+	if c.Request != nil && service.ManagedFilePlanFromContext(c.Request.Context()) != nil {
 		return false
 	}
 	if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {

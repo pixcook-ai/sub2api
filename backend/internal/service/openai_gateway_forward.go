@@ -32,6 +32,15 @@ func (s *OpenAIGatewayService) Forward(
 	defer func() { gwpoolSink.publish(result) }()
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	managedPlan := ManagedFilePlanFromContext(ctx)
+	if managedPlan != nil {
+		if s.managedFiles == nil {
+			return nil, ErrManagedFileNotReady
+		}
+		if _, configErr := BPSFilesConfigForAccount(account); configErr != nil {
+			return nil, ErrManagedFileNotReady
+		}
+	}
 	if account.UsesOpenAIRawRelay() {
 		return s.forwardOpenAIRawRelay(ctx, c, account, body)
 	}
@@ -1086,6 +1095,33 @@ func (s *OpenAIGatewayService) Forward(
 		ctx = context.WithValue(ctx, gatewayPoolFirstOutputBudgetKey{}, poolFirstOutputBudget)
 	}
 
+	if managedPlan != nil {
+		resolved, resolveErr := s.managedFiles.Resolve(ctx, managedPlan, account, body)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		body = resolved.Body
+		var managedGroupID *int64
+		if value, exists := c.Get("api_key"); exists {
+			if key, valid := value.(*APIKey); valid && key != nil {
+				managedGroupID = key.GroupID
+			}
+		}
+		managedAPIKey, managedBaseURL := account.GetCredential("api_key"), account.GetCredential("base_url")
+		authorizeManagedSend := func(sendCtx context.Context) error {
+			current, checkErr := s.RecheckManagedFileAccount(sendCtx, managedGroupID, account.ID, requestedModel)
+			if checkErr != nil {
+				return ErrManagedFileNotReady
+			}
+			currentConfig, checkErr := BPSFilesConfigForAccount(current)
+			if checkErr != nil || currentConfig != resolved.Config || current.GetCredential("api_key") != managedAPIKey || current.GetCredential("base_url") != managedBaseURL {
+				return ErrManagedFileNotReady
+			}
+			return resolved.Authorize(sendCtx)
+		}
+		ctx = withManagedFileGeneration(ctx, resolved.AccountID, resolved.Config.ServiceKey, resolved.AdmissionID, resolved.OwnerRef, resolved.GroupRef, resolved.BindingSHA256, authorizeManagedSend)
+	}
+
 	httpInvalidEncryptedContentRetryTried := false
 	compactModelFallbackRetried := false
 	agentTaskRecoveryTried := false
@@ -1119,6 +1155,7 @@ func (s *OpenAIGatewayService) Forward(
 			proxyURL = account.Proxy.URL()
 		}
 
+		replaceManagedFileWire(upstreamReq, body)
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
@@ -1150,16 +1187,36 @@ func (s *OpenAIGatewayService) Forward(
 			resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 		}
 
+		// Validated translated failures reuse the normal result metadata path,
+		// but never bind a failed response as a reusable success.
+		var bpsFailureBody []byte
+		var bpsFailureErr error
 		// Handle error response
-		if resp.StatusCode >= 400 {
+		if resp.StatusCode >= 400 && hasBPSFailureContract(account, resp.Header) {
 			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			if safeBody, valid := bpsNonStreamingFailure(account, resp, respBody); valid {
+				bpsFailureBody = safeBody
+				message := extractUpstreamErrorMessage(safeBody)
+				s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, safeBody, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
+				s.recordOpenAIStreamUpstreamError(c, account, false, resp.Header.Get("x-request-id"), "http_error", safeBody, message)
+				writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+				MarkResponseCommitted(c)
+				c.Data(resp.StatusCode, "application/json", safeBody)
+				bpsFailureErr = fmt.Errorf("BPS translated response failed: %s", message)
+			}
+		}
+		if resp.StatusCode >= 400 && bpsFailureBody == nil {
+			respBody := s.readUpstreamErrorBody(resp)
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			policyRejected := IsManagedFileGeneration(ctx) || isBPSRequestPolicyRejection(resp.StatusCode, resp.Header, respBody)
 
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 			upstreamCode := extractUpstreamErrorCode(respBody)
-			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
+			if !policyRejected && !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true
 				expectedTaskID := account.GetCredential("task_id")
 				if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
@@ -1174,7 +1231,7 @@ func (s *OpenAIGatewayService) Forward(
 					strings.Contains(upstreamMsg, "The encrypted content") &&
 					strings.Contains(upstreamMsg, "could not be verified") &&
 					strings.Contains(upstreamMsg, "could not be decrypted or parsed"))
-			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
+			if !policyRejected && !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
 					return nil, decodeErr
@@ -1198,35 +1255,37 @@ func (s *OpenAIGatewayService) Forward(
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
-			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
-				return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
-			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
-				body = retryBody
-				requestView = newOpenAIRequestView(body)
-				reqBody = nil
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
-				continue
-			}
-			if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
-				c, account, requestedModel, body, resp.StatusCode, upstreamMsg, respBody, compactModelFallbackRetried,
-			); retry {
-				if retryBody, err = withCompactFallbackInstructions(retryBody, liteFallbackInstructions); err != nil {
-					return nil, fmt.Errorf("set compact fallback instructions: %w", err)
+			if !policyRejected {
+				if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
+					return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
+				} else if changed && rejectedFieldRetryState.Allow(retryBody) {
+					body = retryBody
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
+					continue
 				}
-				s.appendOpenAICompactFallbackRetryOps(c, account, resp, respBody, upstreamMsg, false)
-				fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-				body = retryBody
-				requestView = newOpenAIRequestView(body)
-				reqBody = nil
-				upstreamModel = fallbackModel
-				compactModelFallbackRetried = true
-				SetOpsUpstreamModel(c, fallbackModel)
-				logger.LegacyPrintf(
-					"service.openai_gateway",
-					"[OpenAI] Retrying explicit compact request once with fallback model (account: %s, from: %s, to: %s, upstream_code: %s)",
-					account.Name, fromModel, fallbackModel, upstreamCode,
-				)
-				continue
+				if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
+					c, account, requestedModel, body, resp.StatusCode, upstreamMsg, respBody, compactModelFallbackRetried,
+				); retry {
+					if retryBody, err = withCompactFallbackInstructions(retryBody, liteFallbackInstructions); err != nil {
+						return nil, fmt.Errorf("set compact fallback instructions: %w", err)
+					}
+					s.appendOpenAICompactFallbackRetryOps(c, account, resp, respBody, upstreamMsg, false)
+					fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+					body = retryBody
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					upstreamModel = fallbackModel
+					compactModelFallbackRetried = true
+					SetOpsUpstreamModel(c, fallbackModel)
+					logger.LegacyPrintf(
+						"service.openai_gateway",
+						"[OpenAI] Retrying explicit compact request once with fallback model (account: %s, from: %s, to: %s, upstream_code: %s)",
+						account.Name, fromModel, fallbackModel, upstreamCode,
+					)
+					continue
+				}
 			}
 			if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
@@ -1285,10 +1344,19 @@ func (s *OpenAIGatewayService) Forward(
 		imageCount := 0
 		searchCount := 0
 		var imageOutputSizes []string
-		if reqStream {
+		var responseErr error
+		if bpsFailureBody != nil {
+			partial, _, reported := extractOpenAIUsageFromJSONBytesWithReport(bpsFailureBody)
+			if !reported {
+				return nil, bpsFailureErr
+			}
+			usage = &partial
+			responseID = gjson.GetBytes(bpsFailureBody, "response.id").String()
+			responseErr = bpsFailureErr
+		} else if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
-				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
+				if signal, ok := asOpenAICompactFallbackSignal(err); ok && !IsManagedFileGeneration(ctx) {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 					); retry {
@@ -1327,7 +1395,13 @@ func (s *OpenAIGatewayService) Forward(
 					}
 					return s.handleErrorResponse(ctx, compactResp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 				}
-				return nil, err
+				var failoverErr *UpstreamFailoverError
+				if account.Type != AccountTypeAPIKey || streamResult == nil || !streamResult.usageReported || streamResult.imageCount > 0 || errors.As(err, &failoverErr) {
+					return nil, err
+				}
+				// The attempt is terminal and cannot fail over. Preserve only usage
+				// actually reported upstream for the handler's error-settlement path.
+				responseErr = err
 			}
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
@@ -1339,7 +1413,7 @@ func (s *OpenAIGatewayService) Forward(
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
-				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
+				if signal, ok := asOpenAICompactFallbackSignal(err); ok && !IsManagedFileGeneration(ctx) {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 					); retry {
@@ -1363,7 +1437,9 @@ func (s *OpenAIGatewayService) Forward(
 			imageOutputSizes = nonStreamResult.imageOutputSizes
 			searchCount = nonStreamResult.searchCount
 		}
-		s.bindHTTPResponseAccount(ctx, c, account, responseID)
+		if responseErr == nil {
+			s.bindHTTPResponseAccount(ctx, c, account, responseID)
+		}
 
 		// Extract and save Codex usage snapshot from response headers (for OAuth accounts).
 		// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
@@ -1412,7 +1488,7 @@ func (s *OpenAIGatewayService) Forward(
 			forwardResult.SearchCount = searchCount
 		}
 		stampOpenAIResponsesUpstreamEndpoint(c, forwardResult)
-		return forwardResult, nil
+		return forwardResult, responseErr
 	}
 }
 
@@ -1647,6 +1723,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 侧信道：按真客户端节奏补一条只读 GET settings/user（openai_codex_side_calls.go）。
 	// 异步执行，读已定稿的身份头，不改本请求。
+	prepareManagedFileGenerationRequest(req)
 	s.scheduleCodexSideCalls(c, account, req)
 	return req, nil
 }
