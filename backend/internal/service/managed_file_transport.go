@@ -39,27 +39,36 @@ func claimManagedFileGeneration(ctx context.Context, accountID int64) error {
 		return nil
 	}
 	if state.accountID != accountID {
-		return ErrManagedFileGenerationReplay
+		return &ManagedFilePreparationError{ErrManagedFileGenerationReplay}
 	}
 	if err := state.caller.Err(); err != nil {
-		return err
+		return &ManagedFilePreparationError{err}
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return &ManagedFilePreparationError{err}
 	}
 	if !state.sent.CompareAndSwap(false, true) {
-		return ErrManagedFileGenerationReplay
+		return &ManagedFilePreparationError{ErrManagedFileGenerationReplay}
 	}
 	if state.authorize == nil {
-		return ErrManagedFileNotReady
+		return &ManagedFilePreparationError{ErrManagedFileNotReady}
 	}
-	return state.authorize(ctx)
+	if err := state.authorize(ctx); err != nil {
+		return &ManagedFilePreparationError{err}
+	}
+	if err := state.caller.Err(); err != nil {
+		return &ManagedFilePreparationError{err}
+	}
+	if err := ctx.Err(); err != nil {
+		return &ManagedFilePreparationError{err}
+	}
+	return nil
 }
 
 // Called after every public/header-override transform. Private proof can only
 // come from the server-resolved context; even ordinary requests strip it.
 func prepareManagedFileGenerationRequest(req *http.Request) {
-	for _, key := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader} {
+	for _, key := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader, managedfiles.RecoveryFeatureHeader} {
 		req.Header.Del(key)
 	}
 	state := managedFileGenerationFrom(req.Context())

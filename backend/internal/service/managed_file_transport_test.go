@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -44,18 +45,34 @@ func TestManagedFileGenerationRejectsWrongAccountAndCancelledCaller(t *testing.T
 	guarded := withManagedFileGeneration(ctx, 7, "key", "admit", "owner", "group", "binding", func(context.Context) error { t.Fatal("must not authorize"); return nil })
 	require.Error(t, claimManagedFileGeneration(guarded, 8))
 	cancel()
-	require.Error(t, claimManagedFileGeneration(context.WithoutCancel(guarded), 7))
+	err := claimManagedFileGeneration(context.WithoutCancel(guarded), 7)
+	var preparationErr *ManagedFilePreparationError
+	require.True(t, errors.As(err, &preparationErr))
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestManagedFileGenerationStripsUntrustedPrivateHeaders(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://example.test/v1/responses", nil)
-	for _, key := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader} {
+	for _, key := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader, managedfiles.RecoveryFeatureHeader} {
 		req.Header.Set(key, "forged")
 	}
 	prepareManagedFileGenerationRequest(req)
-	for _, key := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader} {
+	for _, key := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader, managedfiles.RecoveryFeatureHeader} {
 		require.Empty(t, req.Header.Get(key))
 	}
+}
+
+func TestManagedFileGenerationRechecksCallerAfterAuthorizationWait(t *testing.T) {
+	caller, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	guarded := withManagedFileGeneration(caller, 7, "key", "admit", "owner", "group", "binding", func(context.Context) error {
+		cancel() // A caller can disconnect while the authorization query is pending.
+		return nil
+	})
+	err := claimManagedFileGeneration(context.WithoutCancel(guarded), 7)
+	var preparationErr *ManagedFilePreparationError
+	require.True(t, errors.As(err, &preparationErr))
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestOpenAIForwardManagedGenerationDoesNotRepairRejectedRequest(t *testing.T) {

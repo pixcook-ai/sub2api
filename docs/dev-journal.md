@@ -114,3 +114,9 @@ The focused combined race attempt could not build because the linker/vet ran out
 按已冻结的 SDK 夹具接口，主仓启动器将 `scripts/sdk-conformance/cases/tools.json` 纳入第五份只读源码快照及 `gateway_source_files_sha256`，并向快照中的 wrapper 显式传递绝对 `--tool-cases` 路径。原 SSE 合同、两份 Go 源及既有场景保持不变；工具和文件场景使用的 `store:false` 由 SDK 合同定义，本次不改变请求政策或生产转发逻辑。
 
 TDD 首先复现快照缺少工具合同，再复现启动参数缺少 `--tool-cases`；对应修复后，全部 20 项启动器 Python 测试通过（10.092s，ResourceWarning 按错误处理）。新增启动接缝测试截获子进程参数，不启动 Go、Docker 或 BPS；快照测试验证源文件改动不影响只读副本和独立 SHA-256。本次未改正在正式验收的 `sub2api-files-20261120` 工作树，也未操作旧夹具 49874。新版 11 项工具场景的真实主仓/双 SDK/网关组合仍须由主线另行验收；无 Go 构建、数据库、真实 BPS、推送或部署完成声明。
+
+## 2026-11-20 — BPS 21/22 恢复与实时授权接线
+
+在已协商 metadata recovery 的 Describe 后，Resolve 使用一次恢复轮次并采用返回的完整 reservation；重新打开公共文件及内联原文，关闭时释放新许可。Describe、admission、durable Start 前后和最终发送前复核当前授权。Start 或账本授权等待期间撤权、以及 detached send 授权期间原客户端取消均已确定性复现 RED 后修复；已开始但未发送的上传保留 uncertain 事实。ManagedFilePreparationError 将本地准备失败与账号传输健康处理分离，私有恢复头在公开入口及出站清除。
+
+最终定向 service/handler 测试 41 PASS、零失败或跳过（/tmp/bps-managed-recovery-final.jsonl）；独立 Spec 复核关闭两个 P2，Standards 初审无问题。handler 独立切片 c4752705b 同样 41 PASS。网关私有恢复头检测 1 PASS（/tmp/bps-private-recovery-header-final.jsonl）。这些数字不代表最终 SDK/PG/restart 验收；Composite 路由及模型映射鲜读围栏、14 存储合并和正式双 SDK 仍待后续集成。未推送、部署或调用真实 BPS。

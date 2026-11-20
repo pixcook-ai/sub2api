@@ -35,10 +35,10 @@ func (s *OpenAIGatewayService) Forward(
 	managedPlan := ManagedFilePlanFromContext(ctx)
 	if managedPlan != nil {
 		if s.managedFiles == nil {
-			return nil, ErrManagedFileNotReady
+			return nil, &ManagedFilePreparationError{ErrManagedFileNotReady}
 		}
 		if _, configErr := BPSFilesConfigForAccount(account); configErr != nil {
-			return nil, ErrManagedFileNotReady
+			return nil, &ManagedFilePreparationError{ErrManagedFileNotReady}
 		}
 	}
 	if account.UsesOpenAIRawRelay() {
@@ -1096,30 +1096,32 @@ func (s *OpenAIGatewayService) Forward(
 	}
 
 	if managedPlan != nil {
-		resolved, resolveErr := s.managedFiles.Resolve(ctx, managedPlan, account, body)
-		if resolveErr != nil {
-			return nil, resolveErr
+		selectedConfig, configErr := BPSFilesConfigForAccount(account)
+		if configErr != nil {
+			return nil, &ManagedFilePreparationError{ErrManagedFileNotReady}
 		}
-		body = resolved.Body
-		var managedGroupID *int64
-		if value, exists := c.Get("api_key"); exists {
-			if key, valid := value.(*APIKey); valid && key != nil {
-				managedGroupID = key.GroupID
-			}
-		}
+		managedGroupID := managedPlan.owner.GroupID
 		managedAPIKey, managedBaseURL := account.GetCredential("api_key"), account.GetCredential("base_url")
-		authorizeManagedSend := func(sendCtx context.Context) error {
-			current, checkErr := s.RecheckManagedFileAccount(sendCtx, managedGroupID, account.ID, requestedModel)
+		ctx = withManagedFilePreparationAuthorization(ctx, func(checkCtx context.Context) error {
+			if err := CheckBPSRequestAuthorization(checkCtx, requestedModel); err != nil {
+				return err
+			}
+			current, checkErr := s.RecheckManagedFileAccount(checkCtx, &managedGroupID, account.ID, requestedModel)
 			if checkErr != nil {
 				return ErrManagedFileNotReady
 			}
 			currentConfig, checkErr := BPSFilesConfigForAccount(current)
-			if checkErr != nil || currentConfig != resolved.Config || current.GetCredential("api_key") != managedAPIKey || current.GetCredential("base_url") != managedBaseURL {
+			if checkErr != nil || currentConfig != selectedConfig || current.GetCredential("api_key") != managedAPIKey || current.GetCredential("base_url") != managedBaseURL {
 				return ErrManagedFileNotReady
 			}
-			return resolved.Authorize(sendCtx)
+			return nil
+		})
+		resolved, resolveErr := s.managedFiles.Resolve(ctx, managedPlan, account, body)
+		if resolveErr != nil {
+			return nil, &ManagedFilePreparationError{resolveErr}
 		}
-		ctx = withManagedFileGeneration(ctx, resolved.AccountID, resolved.Config.ServiceKey, resolved.AdmissionID, resolved.OwnerRef, resolved.GroupRef, resolved.BindingSHA256, authorizeManagedSend)
+		body = resolved.Body
+		ctx = withManagedFileGeneration(ctx, resolved.AccountID, resolved.Config.ServiceKey, resolved.AdmissionID, resolved.OwnerRef, resolved.GroupRef, resolved.BindingSHA256, resolved.Authorize)
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
@@ -1159,6 +1161,13 @@ func (s *OpenAIGatewayService) Forward(
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		var preparationErr *ManagedFilePreparationError
+		if errors.As(err, &preparationErr) {
+			if headerGuard != nil {
+				headerGuard.close()
+			}
+			return nil, preparationErr
+		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {

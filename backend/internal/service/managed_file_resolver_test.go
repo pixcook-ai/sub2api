@@ -199,16 +199,16 @@ func TestManagedFileResolverBindsUploadedFileAndRechecksBeforeGeneration(t *test
 	account.Credentials["bps_files_backend_id"] = identity.BackendID
 	account.Credentials["bps_files_subject_fingerprint"] = identity.SubjectFingerprint
 	account.Credentials["bps_files_credential_generation"] = identity.CredentialGeneration
-	result, e := resolver.Resolve(context.Background(), plan, &account, body)
+	result, e := resolver.Resolve(managedResolverAuthorizedContext(), plan, &account, body)
 	require.NoError(t, e)
 	require.EqualValues(t, 3, calls.Load())
 	require.Contains(t, string(result.Body), `"file_id":"file-remote"`)
 	require.Contains(t, string(result.Body), `9007199254740993`)
 	require.Equal(t, []string{"file-a"}, ledger.completed)
-	require.NoError(t, result.Authorize(context.Background()))
+	require.NoError(t, result.Authorize(managedResolverAuthorizedContext()))
 	require.Positive(t, ledger.authorized)
 	ledger.authorizeErr = ErrFileNotFound
-	require.ErrorIs(t, result.Authorize(context.Background()), ErrFileNotFound)
+	require.ErrorIs(t, result.Authorize(managedResolverAuthorizedContext()), ErrFileNotFound)
 	ledger.authorizeErr = nil
 	require.NoError(t, plan.Close())
 	require.Equal(t, 1, ledger.releases)
@@ -259,14 +259,14 @@ func TestManagedFileResolverUploadFailureStopsAndBecomesUncertain(t *testing.T) 
 	account.Credentials["bps_files_backend_id"] = identity.BackendID
 	account.Credentials["bps_files_subject_fingerprint"] = identity.SubjectFingerprint
 	account.Credentials["bps_files_credential_generation"] = identity.CredentialGeneration
-	result, e := resolver.Resolve(context.Background(), plan, &account, body)
+	result, e := resolver.Resolve(managedResolverAuthorizedContext(), plan, &account, body)
 	require.Error(t, e)
 	require.Nil(t, result)
 	require.EqualValues(t, 3, calls.Load())
 	require.Equal(t, []string{"file-a"}, ledger.uncertain)
 	require.Empty(t, ledger.completed)
 	require.Zero(t, ledger.authorized)
-	_, e = resolver.Resolve(context.Background(), plan, &account, body)
+	_, e = resolver.Resolve(managedResolverAuthorizedContext(), plan, &account, body)
 	require.Error(t, e)
 	require.EqualValues(t, 3, calls.Load(), "same plan cannot upload again")
 }
@@ -315,13 +315,13 @@ func TestManagedFileResolverReusesConfirmedCopyWithoutEnsure(t *testing.T) {
 	account.Credentials["bps_files_backend_id"] = identity.BackendID
 	account.Credentials["bps_files_subject_fingerprint"] = identity.SubjectFingerprint
 	account.Credentials["bps_files_credential_generation"] = identity.CredentialGeneration
-	result, e := resolver.Resolve(context.Background(), plan, &account, body)
+	result, e := resolver.Resolve(managedResolverAuthorizedContext(), plan, &account, body)
 	require.NoError(t, e)
 	require.EqualValues(t, 2, calls.Load())
 	require.Contains(t, string(result.Body), `"file_id":"file-existing"`)
 	require.Empty(t, ledger.started)
 	require.NoError(t, plan.Close())
-	require.ErrorIs(t, result.Authorize(context.Background()), ErrManagedFileNotReady)
+	require.ErrorIs(t, result.Authorize(managedResolverAuthorizedContext()), ErrManagedFileNotReady)
 }
 
 func TestManagedFileResolverPreservesFirstCopyWhenSecondUploadFails(t *testing.T) {
@@ -380,7 +380,7 @@ func TestManagedFileResolverPreservesFirstCopyWhenSecondUploadFails(t *testing.T
 	account.Credentials["bps_files_backend_id"] = identity.BackendID
 	account.Credentials["bps_files_subject_fingerprint"] = identity.SubjectFingerprint
 	account.Credentials["bps_files_credential_generation"] = identity.CredentialGeneration
-	result, e := resolver.Resolve(context.Background(), plan, &account, body)
+	result, e := resolver.Resolve(managedResolverAuthorizedContext(), plan, &account, body)
 	require.Error(t, e)
 	require.Nil(t, result)
 	require.Equal(t, []string{"file-a"}, ledger.completed)
@@ -407,4 +407,8 @@ func TestManagedFileResolverRejectsRepeatedPositionBudgetBeforeOpening(t *testin
 	opened, _ := repo.readActivity()
 	require.Empty(t, opened)
 	require.Zero(t, ledger.lookupCalls)
+}
+
+func managedResolverAuthorizedContext() context.Context {
+	return withManagedFilePreparationAuthorization(context.Background(), func(context.Context) error { return nil })
 }
