@@ -34,7 +34,7 @@ func TestManagedFileURLStagesExactBytesAtOriginalPosition(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, "hello")
 	}))
-	defer func() { _ = server.Close() }()
+	defer server.Close()
 	network := managedFileURLNetwork{
 		lookup: func(context.Context, string) ([]netip.Addr, error) {
 			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
@@ -114,7 +114,7 @@ func TestManagedFileURLRejectsPartialAndAmbiguousResponses(t *testing.T) {
 				}
 				_, _ = io.WriteString(w, "hello")
 			}))
-			defer func() { _ = server.Close() }()
+			defer server.Close()
 			parent := t.TempDir()
 			stage, err := stageManagedFileURLs(context.Background(), []ManagedFileURLSource{{URL: "http://files.example/start.txt"}}, nil, DefaultManagedInlineLimits(), parent, managedFileURLTestNetwork(server, nil, nil))
 			if stage != nil {
@@ -214,7 +214,7 @@ func TestManagedFileURLRevalidatesRedirectDNSAndDisablesAmbientCredentials(t *te
 				w.Header().Set("Content-Type", "text/plain")
 				_, _ = io.WriteString(w, "hello")
 			}))
-			defer func() { _ = server.Close() }()
+			defer server.Close()
 			network := managedFileURLTestNetwork(server, func(context.Context, string) ([]netip.Addr, error) {
 				if lookups.Add(1) > 1 && rebind {
 					return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
@@ -255,7 +255,7 @@ func TestManagedFileURLCancellationAndTruncatedTransferCleanup(t *testing.T) {
 				close(started)
 				<-r.Context().Done()
 			}))
-			defer func() { _ = server.Close() }()
+			defer server.Close()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if mode == "cancel" {
@@ -282,7 +282,7 @@ func TestManagedFileURLCancellationAndTruncatedTransferCleanup(t *testing.T) {
 
 func TestManagedFileURLCallerDeadlineBoundsHeaderWait(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
-	defer func() { _ = server.Close() }()
+	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	stage, err := stageManagedFileURLs(ctx, []ManagedFileURLSource{{URL: "http://files.example/a.txt"}}, nil, DefaultManagedInlineLimits(), t.TempDir(), managedFileURLTestNetwork(server, nil, nil))
@@ -305,7 +305,7 @@ func TestManagedFileURLStreamsUnknownLengthWithinSharedBudgets(t *testing.T) {
 				w.(http.Flusher).Flush() // no Content-Length, including for five bytes
 				_, _ = io.WriteString(w, "hello")
 			}))
-			defer func() { _ = server.Close() }()
+			defer server.Close()
 			limits := DefaultManagedInlineLimits()
 			limits.FileBytes, limits.MessageBytes, limits.TotalBytes = 5, 10, 10
 			sources := []ManagedFileURLSource{{URL: "http://files.example/a.txt", Position: managedfiles.Position{Part: 1}}}
@@ -379,7 +379,7 @@ func TestManagedFileURLValidatesDownloadedContentAndTypes(t *testing.T) {
 				w.Header().Set("Content-Type", tc.mime)
 				_, _ = w.Write(tc.data)
 			}))
-			defer func() { _ = server.Close() }()
+			defer server.Close()
 			parent := t.TempDir()
 			stage, err := stageManagedFileURLs(context.Background(), []ManagedFileURLSource{{URL: "http://files.example/download", Filename: tc.filename}}, nil, DefaultManagedInlineLimits(), parent, managedFileURLTestNetwork(server, nil, nil))
 			if stage != nil {
@@ -439,7 +439,7 @@ func TestManagedFileURLRejectsUnsafeRedirectAndUnsupportedResponseBeforeDisk(t *
 				}
 				_, _ = io.WriteString(w, "hello")
 			}))
-			defer func() { _ = server.Close() }()
+			defer server.Close()
 			parent := t.TempDir()
 			limits := DefaultManagedInlineLimits()
 			limits.FileBytes = 5
@@ -478,7 +478,7 @@ func TestManagedFileURLDefaultLimitRejectsLargeChunkedTransferAndCleans(t *testi
 			}
 		}
 	}))
-	defer func() { _ = server.Close() }()
+	defer server.Close()
 	parent := t.TempDir()
 	stage, err := stageManagedFileURLs(context.Background(), []ManagedFileURLSource{{URL: "http://files.example/large.txt"}}, nil, DefaultManagedInlineLimits(), parent, managedFileURLTestNetwork(server, nil, nil))
 	if stage != nil {
@@ -501,7 +501,7 @@ func TestManagedFileURLStorageFailurePreservesErrnoAndCleansEarlierBytes(t *test
 				w.Header().Set("Content-Type", "text/plain")
 				_, _ = io.WriteString(w, "hello")
 			}))
-			defer func() { _ = server.Close() }()
+			defer server.Close()
 			fs := defaultManagedInlineStagingFilesystem()
 			create := fs.create
 			created := 0

@@ -185,7 +185,7 @@ func TestManagedFileResolverBindsUploadedFileAndRechecksBeforeGeneration(t *test
 			w.WriteHeader(404)
 		}
 	}))
-	defer func() { _ = server.Close() }()
+	defer server.Close()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}],"metadata":{"large":9007199254740993}}`)
@@ -246,7 +246,7 @@ func TestManagedFileResolverUploadFailureStopsAndBecomesUncertain(t *testing.T) 
 			w.WriteHeader(500)
 		}
 	}))
-	defer func() { _ = server.Close() }()
+	defer server.Close()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}]}`)
@@ -301,7 +301,7 @@ func TestManagedFileResolverReusesConfirmedCopyWithoutEnsure(t *testing.T) {
 			w.WriteHeader(500)
 		}
 	}))
-	defer func() { _ = server.Close() }()
+	defer server.Close()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"}]}]}`)
@@ -367,7 +367,7 @@ func TestManagedFileResolverPreservesFirstCopyWhenSecondUploadFails(t *testing.T
 			w.WriteHeader(500)
 		}
 	}))
-	defer func() { _ = server.Close() }()
+	defer server.Close()
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	resolver := NewManagedFileResolver(managedResolverFiles(t, repo), ledger, &bpsFilesTestTransport{client: server.Client()}, cfg)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-a"},{"type":"input_file","file_id":"file-b"}]}]}`)
