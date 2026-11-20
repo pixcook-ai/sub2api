@@ -19,6 +19,153 @@ LAUNCHER = runpy.run_path(str(Path(__file__).with_name("launch.py")))
 
 
 class LauncherBoundaryTest(unittest.TestCase):
+    def recovery_server(self, transform=None, *, status=200, location=None):
+        baseline = self.description()
+        observed = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                feature = self.headers.get("X-Bps-Files-Recovery")
+                observed.append({"path": self.path, "service_key": self.headers.get("X-Bps-Service-Key"),
+                                 "recovery": feature, "authorization": self.headers.get("Authorization")})
+                if self.headers.get("X-Bps-Service-Key") != "s" * 48:
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+                description = json.loads(json.dumps(baseline))
+                if feature:
+                    description["capabilities"]["metadata_recovery"] = True
+                payload = transform(description) if transform and feature else json.dumps(description).encode()
+                self.send_response(status if feature else 200)
+                self.send_header("Content-Type", "application/json")
+                if location and feature:
+                    self.send_header("Location", location)
+                self.end_headers()
+                self.wfile.write(payload)
+            def log_message(self, *_args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}", observed
+
+    def recovery_gateway(self, directory, control):
+        gateway = self.managed_gateway(directory, control)
+        root = Path(directory).resolve()
+        control_socket = root / "restart.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(control_socket))
+        listener.listen(1)
+        control_socket.chmod(0o600)
+        self.addCleanup(listener.close)
+        gateway["gateway_restart"] = {"contract": "bps-fixture-gateway-restart/1", "control_socket": str(control_socket), "supervisor_pid": os.getpid()}
+        return gateway
+
+    def test_recovery_negotiation_preserves_baseline_and_uses_independent_feature_request(self):
+        negotiate = LAUNCHER.get("negotiate_metadata_recovery")
+        self.assertIsNotNone(negotiate, "recovery negotiation is not implemented")
+        control, observed = self.recovery_server()
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = self.recovery_gateway(directory, control)
+            baseline = LAUNCHER["describe_managed_files"](gateway)
+            before = json.dumps(baseline, sort_keys=True)
+            result = negotiate(baseline)
+            self.assertEqual(json.dumps(baseline, sort_keys=True), before)
+            self.assertIs(result["managed_files"]["description"]["capabilities"]["metadata_recovery"], False)
+            recovery = result["metadata_recovery"]
+            self.assertEqual(set(recovery), {"contract", "identity", "description_sha256", "description"})
+            self.assertEqual(recovery["contract"], "bps-metadata-recovery/1")
+            self.assertIs(recovery["description"]["capabilities"]["metadata_recovery"], True)
+            self.assertEqual(recovery["description"]["limits"], baseline["managed_files"]["description"]["limits"])
+            encoded = json.dumps(recovery["description"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            self.assertEqual(recovery["description_sha256"], hashlib.sha256(encoded).hexdigest())
+        self.assertEqual([request["recovery"] for request in observed], [None, "bps-metadata-recovery/1"])
+        self.assertTrue(all(request["service_key"] == "s" * 48 and request["authorization"] is None for request in observed))
+
+    def test_recovery_negotiation_rejects_non_utf8_wire_json(self):
+        control, _ = self.recovery_server(lambda description: json.dumps(description).encode("utf-16"))
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = LAUNCHER["describe_managed_files"](self.recovery_gateway(directory, control))
+            with self.assertRaisesRegex(ValueError, "metadata recovery Describe"):
+                LAUNCHER["negotiate_metadata_recovery"](baseline)
+
+    def test_recovery_negotiation_rejects_changed_or_ambiguous_description(self):
+        changes = {
+            "identity": lambda value: value.update(subject_fingerprint="sha256:" + "2" * 64),
+            "limits": lambda value: value["limits"].update(unique_files=127),
+            "integer boolean": lambda value: value["limits"].update(message_positions=True),
+            "capability integer": lambda value: value["capabilities"].update(metadata_recovery=1),
+            "not negotiated": lambda value: value["capabilities"].update(metadata_recovery=False),
+            "unknown": lambda value: value.update(extra=True),
+            "alias": lambda value: value.update(Backend_Id=value.pop("backend_id")),
+            "null identity": lambda value: value.update(credential_generation=None),
+        }
+        def duplicate(value):
+            return json.dumps(value).encode()[:-1] + b',"contract":"bps-files/1"}'
+        transforms = {name: (lambda value, change=change: (change(value), json.dumps(value).encode())[1]) for name, change in changes.items()}
+        transforms.update({"duplicate": duplicate, "oversized": lambda _value: b" " * 65537,
+                           "deep": lambda _value: b"[" * 1500 + b"0" + b"]" * 1500})
+        for name, transform in transforms.items():
+            with self.subTest(name=name):
+                control, _ = self.recovery_server(transform)
+                with tempfile.TemporaryDirectory() as directory:
+                    baseline = LAUNCHER["describe_managed_files"](self.recovery_gateway(directory, control))
+                    with self.assertRaisesRegex(ValueError, "metadata recovery Describe"):
+                        LAUNCHER["negotiate_metadata_recovery"](baseline)
+
+    def test_recovery_negotiation_requires_restart_metadata_before_feature_request(self):
+        control, observed = self.recovery_server()
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = LAUNCHER["describe_managed_files"](self.managed_gateway(directory, control))
+            with self.assertRaisesRegex(ValueError, "metadata recovery Describe"):
+                LAUNCHER["negotiate_metadata_recovery"](baseline)
+        self.assertEqual(len(observed), 1)
+        self.assertIsNone(observed[0]["recovery"])
+
+    def test_recovery_negotiation_never_follows_redirect_or_ambient_proxy(self):
+        decoy, received = self.recovery_server()
+        redirect, _ = self.recovery_server(status=302, location=decoy + "/leak")
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = LAUNCHER["describe_managed_files"](self.recovery_gateway(directory, redirect))
+            with self.assertRaisesRegex(ValueError, "metadata recovery Describe"):
+                LAUNCHER["negotiate_metadata_recovery"](baseline)
+        self.assertEqual(received, [])
+        direct, observed = self.recovery_server()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"HTTP_PROXY": decoy, "HTTPS_PROXY": decoy, "ALL_PROXY": decoy,
+                                                                                 "http_proxy": decoy, "https_proxy": decoy, "all_proxy": decoy,
+                                                                                 "NO_PROXY": "", "no_proxy": ""}):
+            baseline = LAUNCHER["describe_managed_files"](self.recovery_gateway(directory, direct))
+            LAUNCHER["negotiate_metadata_recovery"](baseline)
+        self.assertEqual(len(observed), 2)
+        self.assertEqual(received, [])
+
+    def test_recovery_seed_snapshot_keeps_false_baseline_and_private_negotiated_description(self):
+        control, observed = self.recovery_server()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            gateway = self.recovery_gateway(str(root), control)
+            original = json.dumps(gateway, sort_keys=True)
+            verified, snapshot = LAUNCHER["prepare_seed_gateway"](gateway, root, require_metadata_recovery=True)
+            self.assertEqual(json.dumps(gateway, sort_keys=True), original)
+            self.assertEqual(json.loads(snapshot.read_text()), verified)
+            self.assertIs(verified["managed_files"]["description"]["capabilities"]["metadata_recovery"], False)
+            self.assertIs(verified["metadata_recovery"]["description"]["capabilities"]["metadata_recovery"], True)
+            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(len(observed), 2)
+
+    def test_seed_snapshot_drops_unverified_recovery_attestation_without_opt_in(self):
+        control, observed = self.recovery_server()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            gateway = self.managed_gateway(directory, control)
+            gateway["metadata_recovery"] = {"contract": "forged-recovery-proof"}
+            verified, snapshot = LAUNCHER["prepare_seed_gateway"](gateway, root)
+            self.assertNotIn("metadata_recovery", verified)
+            self.assertNotIn("metadata_recovery", json.loads(snapshot.read_text()))
+            self.assertEqual(gateway["metadata_recovery"], {"contract": "forged-recovery-proof"})
+        self.assertEqual([request["recovery"] for request in observed], [None])
+
     def test_launch_canonicalizes_owned_directory_from_symlinked_tmpdir(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -388,7 +535,7 @@ while True:
             self.assertTrue(LAUNCHER["launcher_matches_checkout"](repository, b"approved launcher\n"))
             self.assertFalse(LAUNCHER["launcher_matches_checkout"](repository, b"different launcher\n"))
 
-    def invoke(self, directory, *, gateway="http://127.0.0.1:8790", metrics="http://127.0.0.1:8791/metrics", key_mode=0o600, existing_output=False, managed=None, require_managed=False, require_inline=False):
+    def invoke(self, directory, *, gateway="http://127.0.0.1:8790", metrics="http://127.0.0.1:8791/metrics", key_mode=0o600, existing_output=False, managed=None, require_managed=False, require_inline=False, require_recovery=False, gateway_restart=None):
         root = Path(directory)
         key = root / "gateway.key"
         key.write_text("synthetic-fixture-key\n")
@@ -400,6 +547,8 @@ while True:
         }
         if managed is not None:
             value["managed_files"] = managed
+        if gateway_restart is not None:
+            value["gateway_restart"] = gateway_restart
         manifest.write_text(json.dumps(value))
         manifest.chmod(0o600)
         output = root / "main.json"
@@ -410,8 +559,22 @@ while True:
             "--gateway-manifest", str(manifest), "--out", str(output), "--validate-only",
             *(["--require-managed-files"] if require_managed else []),
             *(["--require-inline-files"] if require_inline else []),
+            *(["--require-metadata-recovery"] if require_recovery else []),
         ], text=True, capture_output=True)
         return result, output
+
+    def test_required_recovery_contract_requires_restart_metadata_before_services(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = self.recovery_gateway(directory, "http://127.0.0.1:8790")
+            result, output = self.invoke(directory, managed=gateway["managed_files"], require_recovery=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("owned gateway restart fixture", result.stderr)
+            self.assertFalse(output.exists())
+            result, output = self.invoke(directory, managed=gateway["managed_files"], require_recovery=True,
+                                         gateway_restart=gateway["gateway_restart"])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("validated local fixture inputs", result.stdout)
+            self.assertFalse(output.exists(), "input validation does not claim Describe or restart acceptance")
 
     def test_required_inline_contract_rejects_missing_managed_control_before_services(self):
         with tempfile.TemporaryDirectory() as directory:

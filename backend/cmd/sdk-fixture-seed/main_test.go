@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,206 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/managedfiles"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+func recoverySeedInputs(t *testing.T) (string, map[string]any) {
+	t.Helper()
+	dir, gateway := managedSeedInputs(t)
+	baseline := gateway["managed_files"].(map[string]any)["description"]
+	raw, err := json.Marshal(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var negotiated map[string]any
+	if err = json.Unmarshal(raw, &negotiated); err != nil {
+		t.Fatal(err)
+	}
+	negotiated["capabilities"].(map[string]any)["metadata_recovery"] = true
+	raw, err = json.Marshal(negotiated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(raw)
+	gateway["metadata_recovery"] = map[string]any{"contract": "bps-metadata-recovery/1", "identity": map[string]any{
+		"backend_id": negotiated["backend_id"], "subject_fingerprint": negotiated["subject_fingerprint"], "credential_generation": negotiated["credential_generation"],
+	}, "description_sha256": hex.EncodeToString(digest[:]), "description": negotiated}
+	root, err := os.MkdirTemp("", "bps-rs-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socketPath := filepath.Join(root, "control.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	if err = os.Chmod(socketPath, 0600); err != nil {
+		t.Fatal(err)
+	}
+	gateway["gateway_restart"] = map[string]any{"contract": "bps-fixture-gateway-restart/1", "control_socket": socketPath, "supervisor_pid": os.Getpid()}
+	return dir, gateway
+}
+
+func runRecoverySeedBeforeConfig(t *testing.T, dir string, gateway map[string]any) error {
+	t.Helper()
+	raw, err := json.Marshal(gateway)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "recovery-gateway.json")
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = run([]string{"--fixture-dir", dir, "--gateway-manifest", path, "--fixture-out", filepath.Join(dir, "seed.json"), "--main-commit", "test", "--require-metadata-recovery"}, &out)
+	if out.Len() != 0 {
+		t.Fatal("pre-database recovery validation emitted a manifest")
+	}
+	return err
+}
+
+func TestCLIRecoveryFixtureAcceptsNegotiatedSnapshotAndPrivateRestartBeforeConfig(t *testing.T) {
+	dir, gateway := recoverySeedInputs(t)
+	err := runRecoverySeedBeforeConfig(t, dir, gateway)
+	if err == nil || !strings.Contains(err.Error(), "fixture config") {
+		t.Fatalf("got %v, want verified recovery fixture to reach config boundary", err)
+	}
+}
+
+func TestRecoveryFixtureReturnsOnlyPublicProofAndPreservesBaseline(t *testing.T) {
+	_, gateway := recoverySeedInputs(t)
+	managedRaw, err := json.Marshal(gateway["managed_files"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err := validateManagedFixture(managedRaw, gateway["gateway_base_url"].(string), "public-fixture-key-0123456789abcdef", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, hash := managed.Description, managed.DescriptionSHA256
+	recoveryRaw, _ := json.Marshal(gateway["metadata_recovery"])
+	restartRaw, _ := json.Marshal(gateway["gateway_restart"])
+	proof, err := validateRecoveryFixture(recoveryRaw, restartRaw, managed, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proof) != 3 || proof["contract"] != "bps-metadata-recovery/1" || proof["identity"] != managed.Description.Identity || proof["description_sha256"] == "" {
+		t.Fatalf("wrong public recovery proof: %v", proof)
+	}
+	if managed.Description != before || managed.DescriptionSHA256 != hash || managed.Description.Capabilities.MetadataRecovery {
+		t.Fatal("negotiation changed the baseline description or hash")
+	}
+}
+
+func resignRecoveryDescription(t *testing.T, gateway map[string]any) {
+	t.Helper()
+	recovery := gateway["metadata_recovery"].(map[string]any)
+	raw, err := json.Marshal(recovery["description"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(raw)
+	recovery["description_sha256"] = hex.EncodeToString(digest[:])
+}
+
+func TestCLIRecoveryFixtureRejectsUnprovenNegotiationBeforeDatabase(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		alter func(*testing.T, string, map[string]any)
+	}{
+		{"missing negotiation", func(_ *testing.T, _ string, g map[string]any) { delete(g, "metadata_recovery") }},
+		{"missing restart", func(_ *testing.T, _ string, g map[string]any) { delete(g, "gateway_restart") }},
+		{"wrong contract", func(_ *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["contract"] = "bps-metadata-recovery/2"
+		}},
+		{"bad hash", func(_ *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["description_sha256"] = strings.Repeat("0", 64)
+		}},
+		{"null hash", func(_ *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["description_sha256"] = nil
+		}},
+		{"extra snapshot field", func(_ *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["private"] = true
+		}},
+		{"wrong identity", func(_ *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["identity"].(map[string]any)["backend_id"] = "different"
+		}},
+		{"extra identity field", func(_ *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["identity"].(map[string]any)["extra"] = true
+		}},
+		{"capability remains false", func(t *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["capabilities"].(map[string]any)["metadata_recovery"] = false
+			resignRecoveryDescription(t, g)
+		}},
+		{"limits changed even with valid hash", func(t *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["limits"].(map[string]any)["file_bytes"] = 34603027
+			resignRecoveryDescription(t, g)
+		}},
+		{"exponential limit", func(t *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["limits"].(map[string]any)["file_bytes"] = json.RawMessage("209715200e0")
+			resignRecoveryDescription(t, g)
+		}},
+		{"unknown description field", func(t *testing.T, _ string, g map[string]any) {
+			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["private"] = true
+			resignRecoveryDescription(t, g)
+		}},
+		{"case aliased capability", func(t *testing.T, _ string, g map[string]any) {
+			caps := g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["capabilities"].(map[string]any)
+			caps["Metadata_Recovery"] = caps["metadata_recovery"]
+			delete(caps, "metadata_recovery")
+			resignRecoveryDescription(t, g)
+		}},
+		{"baseline may not claim recovery", func(_ *testing.T, _ string, g map[string]any) {
+			g["managed_files"].(map[string]any)["description"].(map[string]any)["capabilities"].(map[string]any)["metadata_recovery"] = true
+		}},
+		{"boolean supervisor pid", func(_ *testing.T, _ string, g map[string]any) {
+			g["gateway_restart"].(map[string]any)["supervisor_pid"] = true
+		}},
+		{"fractional supervisor pid", func(_ *testing.T, _ string, g map[string]any) {
+			g["gateway_restart"].(map[string]any)["supervisor_pid"] = 1.5
+		}},
+		{"unknown restart field", func(_ *testing.T, _ string, g map[string]any) { g["gateway_restart"].(map[string]any)["extra"] = true }},
+		{"relative socket", func(_ *testing.T, _ string, g map[string]any) {
+			g["gateway_restart"].(map[string]any)["control_socket"] = "relative.sock"
+		}},
+		{"regular file is not socket", func(_ *testing.T, dir string, g map[string]any) {
+			g["gateway_restart"].(map[string]any)["control_socket"] = filepath.Join(dir, "gateway.key")
+		}},
+		{"permissive socket", func(t *testing.T, _ string, g map[string]any) {
+			if err := os.Chmod(g["gateway_restart"].(map[string]any)["control_socket"].(string), 0640); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"permissive parent", func(t *testing.T, _ string, g map[string]any) {
+			if err := os.Chmod(filepath.Dir(g["gateway_restart"].(map[string]any)["control_socket"].(string)), 0750); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"duplicate snapshot field", func(t *testing.T, _ string, g map[string]any) {
+			raw, err := json.Marshal(g["metadata_recovery"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			g["metadata_recovery"] = json.RawMessage(strings.Replace(string(raw), `"contract":"bps-metadata-recovery/1"`, `"contract":"bps-metadata-recovery/1","contract":"bps-metadata-recovery/1"`, 1))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, gateway := recoverySeedInputs(t)
+			tc.alter(t, dir, gateway)
+			err := runRecoverySeedBeforeConfig(t, dir, gateway)
+			if err == nil || strings.Contains(err.Error(), "fixture config") {
+				t.Fatalf("unproven recovery reached database/config boundary: %v", err)
+			}
+			if strings.Contains(err.Error(), "private-service-key") {
+				t.Fatal("recovery validation leaked a private key")
+			}
+		})
+	}
+}
 
 func managedSeedInputs(t *testing.T) (string, map[string]any) {
 	t.Helper()
@@ -170,7 +373,7 @@ func TestManagedFixtureAccountsUseActualExplicitCapabilityGate(t *testing.T) {
 			BackendID: "fixture-backend", SubjectFingerprint: "sha256:" + strings.Repeat("a", 64), CredentialGeneration: "fixture-generation",
 		}},
 	}
-	for _, scenario := range []string{"python/managed-file-json", "javascript/managed-file-large-sse", "python/managed-file-inline-json", "javascript/managed-file-inline-large-json"} {
+	for _, scenario := range []string{"python/managed-file-json", "javascript/managed-file-large-sse", "python/managed-file-inline-json", "javascript/managed-file-inline-large-json", "python/managed-recovery-json", "javascript/managed-recovery-large-sse"} {
 		account := &service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 5,
 			Credentials: fixtureAccountCredentials("http://127.0.0.1:8790/v1", "public-key", scenario, managed),
 			Extra:       map[string]any{"openai_responses_mode": "force_responses", "openai_responses_supported": true},
@@ -246,6 +449,25 @@ func TestInlineFixtureScenariosComposeAfterStoredWithoutChangingExistingPools(t 
 	for i, scenario := range []string{"managed-file-inline-json", "managed-file-inline-sse", "managed-file-inline-large-json", "managed-file-inline-mixed-json", "managed-file-inline-mixed-sse", "managed-file-inline-invalid-batch", "managed-file-inline-owner-deny"} {
 		if combined[len(original)+i] != "python/"+scenario || combined[len(original)+7+i] != "javascript/"+scenario {
 			t.Fatalf("inline scenario %s is missing or assigned to a shared pool", scenario)
+		}
+	}
+}
+
+func TestRecoveryFixtureScenariosAppendAfterInlineWithoutChangingPriorPools(t *testing.T) {
+	base := appendInlineFixtureScenarios(appendStoredFixtureScenarios(fixtureScenarios(true)))
+	original := append([]string(nil), base...)
+	combined := appendRecoveryFixtureScenarios(base)
+	if len(combined) != len(original)+6 {
+		t.Fatalf("recovery scenarios added %d entries, want 6", len(combined)-len(original))
+	}
+	for i, scenario := range original {
+		if combined[i] != scenario {
+			t.Fatalf("prior scenario %d changed from %s to %s", i, scenario, combined[i])
+		}
+	}
+	for i, scenario := range []string{"managed-recovery-json", "managed-recovery-sse", "managed-recovery-large-sse"} {
+		if combined[len(original)+i] != "python/"+scenario || combined[len(original)+3+i] != "javascript/"+scenario {
+			t.Fatalf("recovery scenario %s is missing or assigned to a shared pool", scenario)
 		}
 	}
 }

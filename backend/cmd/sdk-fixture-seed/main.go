@@ -15,9 +15,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -128,9 +130,18 @@ func appendInlineFixtureScenarios(scenarios []string) []string {
 	return scenarios
 }
 
+func appendRecoveryFixtureScenarios(scenarios []string) []string {
+	for _, sdk := range []string{"python", "javascript"} {
+		for _, scenario := range []string{"managed-recovery-json", "managed-recovery-sse", "managed-recovery-large-sse"} {
+			scenarios = append(scenarios, sdk+"/"+scenario)
+		}
+	}
+	return scenarios
+}
+
 func fixtureAccountCredentials(upstream, key, scenario string, managed *managedFixture) map[string]any {
 	credentials := map[string]any{"base_url": upstream, "api_key": key}
-	if managed != nil && strings.Contains(scenario, "/managed-file-") {
+	if managed != nil && (strings.Contains(scenario, "/managed-file-") || strings.Contains(scenario, "/managed-recovery-")) {
 		credentials["openai_capabilities"] = []string{"bps_files", "chat_completions", "responses"}
 		credentials["bps_files_contract"] = managed.Description.Contract
 		credentials["bps_files_control_url"] = managed.ControlURL
@@ -272,6 +283,100 @@ func validateManagedFixture(raw json.RawMessage, gatewayURL, publicKey string, r
 	return &managedFixture{ControlURL: fields["control_url"], ServiceKey: serviceKey, Description: observed, DescriptionSHA256: hex.EncodeToString(digest[:])}, nil
 }
 
+func validateFixtureRestart(raw json.RawMessage) error {
+	fail := func() error { return errors.New("invalid recovery fixture restart metadata") }
+	value, err := managedfiles.Parse(raw)
+	if err != nil {
+		return fail()
+	}
+	root, ok := exactFixtureObject(value, "contract", "control_socket", "supervisor_pid")
+	if !ok || root["contract"] != "bps-fixture-gateway-restart/1" {
+		return fail()
+	}
+	pid, ok := root["supervisor_pid"].(json.Number)
+	if !ok {
+		return fail()
+	}
+	n, err := pid.Int64()
+	if err != nil || n <= 0 || n > 2147483647 {
+		return fail()
+	}
+	path, ok := root["control_socket"].(string)
+	if !ok || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return fail()
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil || canonical != path {
+		return fail()
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode().Type() != os.ModeSocket || info.Mode().Perm() != 0600 || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		return fail()
+	}
+	owner, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || uint64(owner.Uid) != uint64(os.Getuid()) {
+		return fail()
+	}
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil || !parent.IsDir() || parent.Mode().Perm() != 0700 || parent.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		return fail()
+	}
+	owner, ok = parent.Sys().(*syscall.Stat_t)
+	if !ok || uint64(owner.Uid) != uint64(os.Getuid()) {
+		return fail()
+	}
+	return nil
+}
+
+func validateRecoveryFixture(raw, restart json.RawMessage, managed *managedFixture, required bool) (map[string]any, error) {
+	fail := func() (map[string]any, error) { return nil, errors.New("invalid metadata recovery fixture snapshot") }
+	if len(raw) == 0 && !required {
+		return nil, nil
+	}
+	if managed == nil || managed.Description.Capabilities.MetadataRecovery || validateFixtureRestart(restart) != nil {
+		return fail()
+	}
+	value, err := managedfiles.Parse(raw)
+	if err != nil {
+		return fail()
+	}
+	root, ok := exactFixtureObject(value, "contract", "identity", "description_sha256", "description")
+	if !ok || root["contract"] != "bps-metadata-recovery/1" {
+		return fail()
+	}
+	digest, ok := root["description_sha256"].(string)
+	if !ok || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(digest) {
+		return fail()
+	}
+	expected := managed.Description
+	expected.Capabilities.MetadataRecovery = true
+	expectedRaw, err := json.Marshal(expected)
+	if err != nil {
+		return fail()
+	}
+	expectedDescription, err := managedfiles.Parse(expectedRaw)
+	if err != nil || !reflect.DeepEqual(root["description"], expectedDescription) {
+		return fail()
+	}
+	identityRaw, err := json.Marshal(managed.Description.Identity)
+	if err != nil {
+		return fail()
+	}
+	identity, err := managedfiles.Parse(identityRaw)
+	if err != nil || !reflect.DeepEqual(root["identity"], identity) {
+		return fail()
+	}
+	canonical, err := json.Marshal(root["description"])
+	if err != nil {
+		return fail()
+	}
+	actual := sha256.Sum256(canonical)
+	if hex.EncodeToString(actual[:]) != digest {
+		return fail()
+	}
+	return map[string]any{"contract": "bps-metadata-recovery/1", "identity": managed.Description.Identity, "description_sha256": digest}, nil
+}
+
 func run(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("sdk-fixture-seed", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -283,6 +388,7 @@ func run(args []string, out io.Writer) error {
 	requireManaged := fs.Bool("require-managed-files", false, "")
 	requireStored := fs.Bool("require-stored-responses", false, "")
 	requireInline := fs.Bool("require-inline-files", false, "")
+	requireRecovery := fs.Bool("require-metadata-recovery", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -319,6 +425,8 @@ func run(args []string, out io.Writer) error {
 		KeyFile      string          `json:"api_key_file"`
 		Commit       string          `json:"gateway_commit"`
 		ManagedFiles json.RawMessage `json:"managed_files"`
+		Recovery     json.RawMessage `json:"metadata_recovery"`
+		Restart      json.RawMessage `json:"gateway_restart"`
 	}
 	data, err := privateFile(*gatewayPath)
 	if err != nil {
@@ -344,7 +452,11 @@ func run(args []string, out io.Writer) error {
 	if len(strings.TrimSpace(string(key))) == 0 {
 		return errors.New("empty gateway key")
 	}
-	managed, err := validateManagedFixture(gateway.ManagedFiles, gateway.BaseURL, strings.TrimSpace(string(key)), *requireManaged || *requireStored || *requireInline)
+	managed, err := validateManagedFixture(gateway.ManagedFiles, gateway.BaseURL, strings.TrimSpace(string(key)), *requireManaged || *requireStored || *requireInline || *requireRecovery)
+	if err != nil {
+		return err
+	}
+	recovery, err := validateRecoveryFixture(gateway.Recovery, gateway.Restart, managed, *requireRecovery)
 	if err != nil {
 		return err
 	}
@@ -385,6 +497,9 @@ func run(args []string, out io.Writer) error {
 	}
 	if *requireInline {
 		scenarios = appendInlineFixtureScenarios(scenarios)
+	}
+	if *requireRecovery {
+		scenarios = appendRecoveryFixtureScenarios(scenarios)
 	}
 	groupIDs := make([]int64, 0, len(scenarios))
 	groupByScenario := map[string]int64{}
@@ -451,7 +566,7 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 		scenarioKeys[scenario] = a1.Path
-		if managed == nil || (!strings.Contains(scenario, "/managed-file-") && !strings.Contains(scenario, "/files-") && !strings.Contains(scenario, "/stored-")) {
+		if managed == nil || (!strings.Contains(scenario, "/managed-file-") && !strings.Contains(scenario, "/managed-recovery-") && !strings.Contains(scenario, "/files-") && !strings.Contains(scenario, "/stored-")) {
 			continue
 		}
 		roleKeys := map[string]fixtureRoleKey{"a1": a1}
@@ -485,6 +600,9 @@ func run(args []string, out io.Writer) error {
 	if *requireInline {
 		manifest["inline_files"] = map[string]any{"contract": "bps-inline-files/1", "identity": managed.Description.Identity,
 			"scope": "request-private-file-data"}
+	}
+	if *requireRecovery {
+		manifest["metadata_recovery"] = recovery
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

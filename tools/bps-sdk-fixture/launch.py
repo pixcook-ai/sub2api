@@ -64,7 +64,7 @@ def gateway_restart_descriptor(value):
     return dict(value)
 
 
-def gateway_inputs(manifest_path, require_managed=False):
+def gateway_inputs(manifest_path, require_managed=False, require_recovery=False):
     value = strict_json(private_read(manifest_path, "gateway_manifest"))
     if value.get("contract_version") != 1 or value.get("source") != "local":
         raise ValueError("gateway manifest must be a version 1 local fixture")
@@ -78,6 +78,8 @@ def gateway_inputs(manifest_path, require_managed=False):
     value = value | {"gateway_base_url": gateway, "bps_metrics_url": metrics, "api_key_file": str(key)}
     if "gateway_restart" in value:
         value["gateway_restart"] = gateway_restart_descriptor(value["gateway_restart"])
+    elif require_recovery:
+        raise ValueError("metadata recovery requires the owned gateway restart fixture")
     managed = value.get("managed_files")
     if managed is None:
         if require_managed:
@@ -127,7 +129,8 @@ def strict_json(raw):
         return result
     def invalid_constant(_value):
         raise ValueError("invalid JSON number")
-    return json.loads(raw, object_pairs_hook=unique, parse_constant=invalid_constant)
+    text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+    return json.loads(text, object_pairs_hook=unique, parse_constant=invalid_constant)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -135,7 +138,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def describe_managed_files(gateway):
+def describe_managed_files(gateway, *, metadata_recovery=False):
     managed = gateway.get("managed_files")
     if managed is None:
         return gateway
@@ -143,6 +146,8 @@ def describe_managed_files(gateway):
         key = private_read(managed["service_key_file"], "managed_files.service_key_file", 1025).decode().strip()
         request = Request(managed["control_url"] + "/internal/bps-files/v1/describe",
                           headers={"X-Bps-Service-Key": key, "Accept": "application/json"})
+        if metadata_recovery:
+            request.add_header("X-Bps-Files-Recovery", "bps-metadata-recovery/1")
         # Ambient proxies and redirects must never receive the private service credential.
         opener = build_opener(ProxyHandler({}), NoRedirect())
         with opener.open(request, timeout=5) as response:
@@ -163,7 +168,7 @@ def describe_managed_files(gateway):
                 or not re.fullmatch(r"sha256:[a-f0-9]{64}", description["subject_fingerprint"])):
             raise ValueError("description identity mismatch")
         capabilities = description["capabilities"]
-        expected = {"batch_admit": True, "ensure_upload": True, "metadata_recovery": False}
+        expected = {"batch_admit": True, "ensure_upload": True, "metadata_recovery": metadata_recovery}
         if (not isinstance(capabilities, dict) or set(capabilities) != set(expected)
                 or any(capabilities[field] is not value for field, value in expected.items())):
             raise ValueError("unsupported description capabilities")
@@ -186,10 +191,29 @@ def describe_managed_files(gateway):
     except HTTPError as error:
         error.close()
         raise ValueError("managed_files Describe failed validation") from None
-    except (OSError, URLError, UnicodeError, ValueError, TypeError, KeyError):
+    except (OSError, URLError, UnicodeError, ValueError, TypeError, KeyError, RecursionError):
         # Never surface raw response bodies, header values, URLs or credentials.
         raise ValueError("managed_files Describe failed validation") from None
     return gateway | {"managed_files": managed | {"description": description}}
+
+
+def negotiate_metadata_recovery(gateway):
+    try:
+        gateway_restart_descriptor(gateway["gateway_restart"])
+        baseline = gateway["managed_files"]["description"]
+        if baseline["capabilities"]["metadata_recovery"] is not False:
+            raise ValueError("baseline must not advertise recovery")
+        negotiated = describe_managed_files(gateway, metadata_recovery=True)["managed_files"]["description"]
+        expected = baseline | {"capabilities": baseline["capabilities"] | {"metadata_recovery": True}}
+        encoded = json.dumps(negotiated, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        if encoded != json.dumps(expected, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode():
+            raise ValueError("recovery negotiation changed baseline facts")
+        identity = {field: baseline[field] for field in ("backend_id", "subject_fingerprint", "credential_generation")}
+    except (OSError, ValueError, TypeError, KeyError):
+        raise ValueError("metadata recovery Describe failed validation") from None
+    return gateway | {"metadata_recovery": {"contract": "bps-metadata-recovery/1", "identity": identity,
+                                           "description_sha256": hashlib.sha256(encoded).hexdigest(),
+                                           "description": negotiated}}
 
 
 def command(*args, cwd=None, env=None):
@@ -314,8 +338,12 @@ def snapshot_gateway_sources(repository, data_dir):
     return snapshot, hashes
 
 
-def prepare_seed_gateway(gateway, data_dir):
-    verified = describe_managed_files(gateway)
+def prepare_seed_gateway(gateway, data_dir, *, require_metadata_recovery=False):
+    # Only this launcher's authenticated feature request can create the private
+    # negotiation snapshot; source manifests cannot supply an attestation.
+    verified = describe_managed_files({key: value for key, value in gateway.items() if key != "metadata_recovery"})
+    if require_metadata_recovery:
+        verified = negotiate_metadata_recovery(verified)
     path = data_dir / "gateway-seed-input.json"
     private_write(path, verified)
     return verified, path
@@ -400,14 +428,17 @@ def launch(args, gateway):
                     raise RuntimeError("owned gateway fixture exited; inspect private gateway.log")
                 return gateway_manifest.exists()
             wait_until("owned gateway fixture", gateway_ready)
-            gateway = gateway_inputs(gateway_manifest, args.require_managed_files)
+            gateway = gateway_inputs(gateway_manifest, args.require_managed_files, getattr(args, "require_metadata_recovery", False))
             gateway_after_build = source_state(gateway_repository)
             gateway["gateway_commit"] = gateway_source["commit"]
             gateway["gateway_tracked_dirty"] = gateway_source["tracked_dirty"] or gateway_after_build["tracked_dirty"]
             gateway["gateway_source_clean"] = not gateway_source["source_dirty"] and gateway_after_build == gateway_source
             gateway["gateway_binary_sha256"] = binary_digest(gateway_binary)
             gateway["gateway_source_files_sha256"] = gateway_source_hashes
-        gateway, seed_gateway_input = prepare_seed_gateway(gateway, data_dir)
+        if getattr(args, "require_metadata_recovery", False):
+            gateway, seed_gateway_input = prepare_seed_gateway(gateway, data_dir, require_metadata_recovery=True)
+        else:
+            gateway, seed_gateway_input = prepare_seed_gateway(gateway, data_dir)
         stored_options = stored_response_fixture_options(getattr(args, "require_stored_responses", False), gateway)
         restart_identity = fixture_restart_identity(run_id)
         marker_snapshot = data_dir / "fixture-marker-next.json"
@@ -480,7 +511,8 @@ def launch(args, gateway):
                                      "--fixture-out", str(seed_manifest),
                                      *(["--require-managed-files"] if args.require_managed_files else []),
                                      *(["--require-stored-responses"] if getattr(args, "require_stored_responses", False) else []),
-                                     *(["--require-inline-files"] if getattr(args, "require_inline_files", False) else [])], env=environment,
+                                     *(["--require-inline-files"] if getattr(args, "require_inline_files", False) else []),
+                                     *(["--require-metadata-recovery"] if getattr(args, "require_metadata_recovery", False) else [])], env=environment,
                                     stdout=log, stderr=subprocess.STDOUT)
         if result.returncode:
             raise RuntimeError("fixture seed failed; inspect private seed.log")
@@ -585,10 +617,11 @@ def main():
     parser.add_argument("--require-managed-files", action="store_true")
     parser.add_argument("--require-stored-responses", action="store_true")
     parser.add_argument("--require-inline-files", action="store_true")
+    parser.add_argument("--require-metadata-recovery", action="store_true")
     args = parser.parse_args()
-    args.require_managed_files = args.require_managed_files or args.require_stored_responses or args.require_inline_files
+    args.require_managed_files = args.require_managed_files or args.require_stored_responses or args.require_inline_files or args.require_metadata_recovery
     try:
-        gateway = gateway_inputs(args.gateway_manifest, args.require_managed_files) if args.gateway_manifest else None
+        gateway = gateway_inputs(args.gateway_manifest, args.require_managed_files, args.require_metadata_recovery) if args.gateway_manifest else None
         if args.gateway_repo and not (Path(args.gateway_repo) / "scripts/sdk-conformance/fixture.py").is_file():
             raise ValueError("gateway-repo has no SDK fixture launcher")
         if Path(args.out).exists():
