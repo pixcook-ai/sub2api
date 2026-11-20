@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -321,4 +322,60 @@ func TestClassifyNoAccountError_GPT55Retirement(t *testing.T) {
 func TestGPT55RetirementEmptyListingDoesNotUseDefaults(t *testing.T) {
 	require.Empty(t, modelListingSource(service.PlatformOpenAI, []string{}, []string{"gpt-5.5"}))
 	require.Equal(t, []string{"gpt-5.5"}, modelListingSource(service.PlatformOpenAI, nil, []string{"gpt-5.5"}))
+}
+
+type selectionAvailabilityDiagnoser struct {
+	fakeDiagnoser
+	selection service.OpenAISelectionAvailability
+}
+
+func (d *selectionAvailabilityDiagnoser) DiagnoseOpenAISelectionAvailability(context.Context, service.OpenAIAccountScheduleRequest) service.OpenAISelectionAvailability {
+	return d.selection
+}
+
+func TestClassifyOpenAISelectionAvailability_PreservesCooldown429(t *testing.T) {
+	c := newTestGinContextWithRequest()
+	groupID := int64(17)
+	d := &selectionAvailabilityDiagnoser{selection: service.OpenAISelectionAvailability{
+		ModelAvailabilityDiagnosis: service.ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true},
+		RetryAt:                    time.Now().Add(time.Minute),
+	}}
+	d.resp = d.selection.ModelAvailabilityDiagnosis
+	result := classifyOpenAISelectionAvailabilityFromGin(c, d, &service.APIKey{GroupID: &groupID}, service.OpenAIAccountScheduleRequest{
+		GroupID: &groupID, Platform: service.PlatformOpenAI, RequestedModel: "gpt-6.1-sol", RequiredTransport: service.OpenAIUpstreamTransportAny,
+	}, "public-model")
+	require.Equal(t, http.StatusTooManyRequests, result.Status)
+	require.Equal(t, "rate_limit_error", result.ErrType)
+	require.Equal(t, "60", c.Writer.Header().Get("Retry-After"))
+	require.Empty(t, d.calls, "the new diagnostic already includes model availability; do not repeat its repository lookup")
+}
+
+func TestClassifyOpenAISelectionAvailability_RetainsOtherPolicies(t *testing.T) {
+	cases := []struct {
+		name      string
+		diagnosis service.OpenAISelectionAvailability
+		want      int
+		kind      string
+	}{
+		{"empty pool", service.OpenAISelectionAvailability{}, http.StatusServiceUnavailable, "api_error"},
+		{"unproven mixed or unknown", service.OpenAISelectionAvailability{ModelAvailabilityDiagnosis: service.ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}}, http.StatusServiceUnavailable, "api_error"},
+		{"unsupported model wins", service.OpenAISelectionAvailability{ModelAvailabilityDiagnosis: service.ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: false}, RetryAt: time.Now().Add(time.Minute)}, http.StatusNotFound, "model_not_found"},
+		{"expired cooldown", service.OpenAISelectionAvailability{ModelAvailabilityDiagnosis: service.ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}, RetryAt: time.Now().Add(-time.Minute)}, http.StatusServiceUnavailable, "api_error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestGinContextWithRequest()
+			groupID := int64(17)
+			d := &selectionAvailabilityDiagnoser{selection: tc.diagnosis}
+			result := classifyOpenAISelectionAvailabilityFromGin(c, d, &service.APIKey{GroupID: &groupID}, service.OpenAIAccountScheduleRequest{GroupID: &groupID, Platform: service.PlatformOpenAI, RequestedModel: "routed-model", RequiredTransport: service.OpenAIUpstreamTransportAny}, "public-model")
+			require.Equal(t, tc.want, result.Status)
+			require.Equal(t, tc.kind, result.ErrType)
+			require.Empty(t, c.Writer.Header().Get("Retry-After"))
+			require.Empty(t, d.calls)
+			if result.ModelNotFound {
+				require.Contains(t, result.Message, "public-model")
+				require.NotContains(t, result.Message, "routed-model")
+			}
+		})
+	}
 }

@@ -1187,8 +1187,27 @@ func (s *OpenAIGatewayService) Forward(
 			resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 		}
 
+		// Validated translated failures reuse the normal result metadata path,
+		// but never bind a failed response as a reusable success.
+		var bpsFailureBody []byte
+		var bpsFailureErr error
 		// Handle error response
-		if resp.StatusCode >= 400 {
+		if resp.StatusCode >= 400 && hasBPSFailureContract(account, resp.Header) {
+			respBody := s.readUpstreamErrorBody(resp)
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			if safeBody, valid := bpsNonStreamingFailure(account, resp, respBody); valid {
+				bpsFailureBody = safeBody
+				message := extractUpstreamErrorMessage(safeBody)
+				s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, safeBody, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
+				s.recordOpenAIStreamUpstreamError(c, account, false, resp.Header.Get("x-request-id"), "http_error", safeBody, message)
+				writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+				MarkResponseCommitted(c)
+				c.Data(resp.StatusCode, "application/json", safeBody)
+				bpsFailureErr = fmt.Errorf("BPS translated response failed: %s", message)
+			}
+		}
+		if resp.StatusCode >= 400 && bpsFailureBody == nil {
 			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -1326,7 +1345,15 @@ func (s *OpenAIGatewayService) Forward(
 		searchCount := 0
 		var imageOutputSizes []string
 		var responseErr error
-		if reqStream {
+		if bpsFailureBody != nil {
+			partial, _, reported := extractOpenAIUsageFromJSONBytesWithReport(bpsFailureBody)
+			if !reported {
+				return nil, bpsFailureErr
+			}
+			usage = &partial
+			responseID = gjson.GetBytes(bpsFailureBody, "response.id").String()
+			responseErr = bpsFailureErr
+		} else if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok && !IsManagedFileGeneration(ctx) {

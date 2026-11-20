@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
@@ -167,7 +168,30 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 	usage := &OpenAIUsage{}
 	usageReported := false
+	bpsSafeUsage := &OpenAIUsage{}
+	bpsSafeUsageReported := false
 	parseUsage := func(data []byte, eventType string) {
+		if hasBPSFailureContract(account, resp.Header) {
+			// Settle exactly the same bounded public counters as the translated
+			// envelope exposes; one valid field cannot bless an invalid sibling.
+			selected := gjson.GetBytes(data, "usage")
+			if !selected.IsObject() {
+				selected = gjson.GetBytes(data, "response.usage")
+			}
+			if safe := safeOpenAIFailureUsage(selected); safe != nil {
+				encoded, err := json.Marshal(map[string]any{"usage": safe})
+				if err == nil {
+					parsed, _, reported := extractOpenAIUsageFromJSONBytesWithReport(encoded)
+					mergeOpenAIUsageNonZero(bpsSafeUsage, parsed)
+					bpsSafeUsageReported = bpsSafeUsageReported || reported
+				}
+			}
+			if bpsStreamingFailure(account, resp, data) {
+				*usage = *bpsSafeUsage
+				usageReported = bpsSafeUsageReported
+				return
+			}
+		}
 		if s.parseSSEUsageBytesWithType(data, eventType, usage) {
 			usageReported = true
 		}
@@ -539,6 +563,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
 			eventType := effectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
+			normalizedBareError := false
+			if normalized, ok := normalizeBPSBareError(account, resp, dataBytes); ok {
+				dataBytes = normalized
+				data = string(normalized)
+				eventType = "response.failed"
+				pendingSSEEventType = eventType
+				normalizedBareError = true
+				line = "data: " + data
+				suppressCurrentEvent = false
+			}
 			if keepaliveEventDirect || forwardsKeepaliveDirect(eventType) {
 				keepaliveEventDirect = true
 				eventInProgress = true
@@ -582,7 +616,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				capacityFailoverSuppressedLogged = true
 			}
 			cyberHit := false
-			if eventType == "response.failed" || eventType == "error" {
+			if eventType == "response.failed" || eventType == "error" || eventType == "response.cancelled" && hasBPSFailureContract(account, resp.Header) {
 				if codexFailureTerminal && eventType == "error" {
 					sawBareError = true
 					bareErrorPayload = append(bareErrorPayload[:0], dataBytes...)
@@ -609,7 +643,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						UpstreamOutTok: usage.OutputTokens,
 					})
 				}
-				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				// A validated translated terminal must stay on this stream even
+				// before semantic text; ordinary unmarked failures keep failover.
+				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted) || bpsStreamingFailure(account, resp, dataBytes)
 				if !outputStarted && !cyberHit {
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						sawFailedEvent = true
@@ -767,6 +803,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return
 			}
 
+			// Payload restoration/stamping above can rebuild the data line.
+			// Append the authoritative event field last so upstream event:error
+			// cannot make the JS SDK throw instead of observing this terminal.
+			if normalizedBareError {
+				line = "event: response.failed\n" + line
+			}
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
@@ -1357,7 +1399,7 @@ func openAIUsageHasReportedCount(usage gjson.Result) bool {
 		"output_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens",
 	} {
 		count := usage.Get(field)
-		if count.Type == gjson.Number && count.Num >= 0 {
+		if validOpenAIFailureCount(count) {
 			return true
 		}
 	}
@@ -2062,7 +2104,7 @@ func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, sou
 
 func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string, clientOutputStarted bool) ([]byte, bool) {
 	eventType = strings.TrimSpace(eventType)
-	isFailedEvent := eventType == "response.failed"
+	isFailedEvent := eventType == "response.failed" || eventType == "response.cancelled"
 	if (!isFailedEvent && eventType != "error") || len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return payload, false
 	}
@@ -2102,8 +2144,6 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 	}
 	for _, path := range []string{
 		"response.instructions",
-		"response.output",
-		"response.usage",
 		"response.metadata",
 		"response.reasoning",
 		"response.tools",
@@ -2120,7 +2160,67 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 		}
 		updated = next
 	}
+
+	// Failure output is intentionally empty, while numeric usage is protocol
+	// evidence already parsed for settlement. Keep only public count fields.
+	var err error
+	updated, err = sjson.SetBytes(updated, "response.output", []any{})
+	if err != nil {
+		return payload, false
+	}
+	if usage := safeOpenAIFailureUsage(gjson.GetBytes(payload, "response.usage")); usage != nil {
+		updated, err = sjson.SetBytes(updated, "response.usage", usage)
+	} else {
+		updated, err = sjson.DeleteBytes(updated, "response.usage")
+	}
+	if err != nil {
+		return payload, false
+	}
 	return updated, !bytes.Equal(updated, payload)
+}
+
+// safeOpenAIFailureUsage exposes observed standard counts without forwarding
+// arbitrary upstream diagnostic objects or fabricating unknown zero values.
+func safeOpenAIFailureUsage(value gjson.Result) map[string]any {
+	if !value.IsObject() {
+		return nil
+	}
+	result := make(map[string]any)
+	copyCount := func(source gjson.Result, field string, dest map[string]any) {
+		count := source.Get(field)
+		if validOpenAIFailureCount(count) {
+			dest[field] = json.RawMessage(count.Raw)
+		}
+	}
+	for _, field := range []string{"input_tokens", "output_tokens", "total_tokens"} {
+		copyCount(value, field, result)
+	}
+	for field, child := range map[string]string{"input_tokens_details": "cached_tokens", "output_tokens_details": "reasoning_tokens"} {
+		details := make(map[string]any)
+		copyCount(value.Get(field), child, details)
+		if len(details) > 0 {
+			result[field] = details
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// Exact arithmetic prevents fractional large numbers from rounding into counts.
+func validOpenAIFailureCount(count gjson.Result) bool {
+	if count.Type != gjson.Number || len(count.Raw) > 64 {
+		return false
+	}
+	if index := strings.IndexAny(count.Raw, "eE"); index >= 0 {
+		exponent, err := strconv.Atoi(count.Raw[index+1:])
+		if err != nil || exponent < -324 || exponent > 308 {
+			return false
+		}
+	}
+	exact, ok := new(big.Rat).SetString(count.Raw)
+	return ok && exact.IsInt() && exact.Sign() >= 0 && exact.Num().Cmp(big.NewInt(9007199254740991)) <= 0
 }
 
 func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.Response, c *gin.Context, message string) error {

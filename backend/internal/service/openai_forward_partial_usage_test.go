@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIForwardFailedStreamPreservesReportedUsage(t *testing.T) {
@@ -109,4 +113,68 @@ func TestOpenAIForwardFailedStreamDoesNotBorrowUsageEvidenceFromAnotherObject(t 
 	result, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), newOpenAIRejectedFieldTestContext(body), newOpenAIRejectedFieldTestAccount(), body)
 	require.Error(t, err)
 	require.Nil(t, result, "the parser selected the empty top-level object, so nested counts cannot validate fabricated zero")
+}
+
+func TestOpenAIForwardFailedStreamPreservesSafeClientTerminal(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`)
+	response := newOpenAIRejectedFieldTestResponse(http.StatusOK,
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"+
+			"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"status\":\"failed\",\"instructions\":\"private instruction\",\"output\":[{\"type\":\"private output\"}],\"error\":{\"code\":\"upstream_error\",\"message\":\"generation failed\"},\"usage\":{\"input_tokens\":9,\"output_tokens\":4,\"total_tokens\":13,\"private_field\":\"private usage\",\"input_tokens_details\":{\"cached_tokens\":2},\"output_tokens_details\":{\"reasoning_tokens\":1}}}}\n\n")
+	response.Header.Set("Content-Type", "text/event-stream")
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{response}}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = newOpenAIRejectedFieldTestContext(body).Request
+	_, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), c, newOpenAIRejectedFieldTestAccount(), body)
+	require.Error(t, err)
+	var terminal string
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if strings.HasPrefix(line, "data: ") && gjson.Get(strings.TrimPrefix(line, "data: "), "type").String() == "response.failed" {
+			terminal = strings.TrimPrefix(line, "data: ")
+		}
+	}
+	require.NotEmpty(t, terminal)
+	require.Equal(t, int64(9), gjson.Get(terminal, "response.usage.input_tokens").Int())
+	require.Equal(t, int64(4), gjson.Get(terminal, "response.usage.output_tokens").Int())
+	require.Equal(t, int64(13), gjson.Get(terminal, "response.usage.total_tokens").Int())
+	require.Equal(t, int64(2), gjson.Get(terminal, "response.usage.input_tokens_details.cached_tokens").Int())
+	require.Equal(t, int64(1), gjson.Get(terminal, "response.usage.output_tokens_details.reasoning_tokens").Int())
+	require.Equal(t, "[]", gjson.Get(terminal, "response.output").Raw)
+	require.NotContains(t, terminal, "private")
+}
+
+func TestOpenAIForwardBPSMarkedFailureRetainsProtocol(t *testing.T) {
+	for _, stream := range []bool{true, false} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":"gpt-5.5","stream":%t,"input":"hello"}`, stream))
+			diagnostic := `{"id":"resp_failed","status":"failed","usage":{"input_tokens":9,"output_tokens":4,"total_tokens":13}}`
+			failure := `{"type":"tokens","code":"rate_limit_exceeded","message":"Rate limit reached on tokens per minute (TPM). Please try again later."}`
+			payload := `{"error":` + failure + `,"response":` + diagnostic + `}`
+			status := http.StatusTooManyRequests
+			if stream {
+				status = http.StatusOK
+				payload = "data: " + `{"type":"response.failed","response":{"id":"resp_failed","status":"failed","output":[],"error":` + strings.Replace(failure, "{", `{"status":429,`, 1) + `,"usage":{"input_tokens":9,"output_tokens":4,"total_tokens":13}}}` + "\n\n"
+			}
+			response := newOpenAIRejectedFieldTestResponse(status, payload)
+			response.Header.Set("X-Bps-Response-Contract", "failure-v1")
+			if stream {
+				response.Header.Set("Content-Type", "text/event-stream")
+			}
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{response}}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = newOpenAIRejectedFieldTestContext(body).Request
+			result, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), c, newOpenAIRejectedFieldTestAccount(), body)
+			require.Error(t, err)
+			var failover *UpstreamFailoverError
+			require.NotErrorAs(t, err, &failover)
+			require.NotNil(t, result)
+			require.Equal(t, 9, result.Usage.InputTokens)
+			require.Equal(t, 4, result.Usage.OutputTokens)
+			require.Len(t, upstream.bodies, 1)
+			require.Equal(t, status, recorder.Code)
+			require.Contains(t, recorder.Body.String(), `"input_tokens":9`)
+			require.Contains(t, recorder.Body.String(), `"rate_limit_exceeded"`)
+		})
+	}
 }
