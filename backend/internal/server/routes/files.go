@@ -21,5 +21,6 @@ func RegisterFileRoutes(r *gin.Engine, h *handler.FileHandler, auth middleware.A
 		h.Upload(c)
 	})
 	files.GET("/:file_id", h.Get)
+	files.DELETE("/:file_id", h.Delete)
 	files.GET("/:file_id/content", h.Content)
 }

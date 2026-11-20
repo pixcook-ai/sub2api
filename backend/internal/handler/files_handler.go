@@ -127,6 +127,19 @@ func (h *FileHandler) Get(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, fileObject(f))
 }
+func (h *FileHandler) Delete(c *gin.Context) {
+	owner, ok := fileOwner(c)
+	if !ok {
+		return
+	}
+	id := c.Param("file_id")
+	if err := h.files.Delete(c.Request.Context(), owner, id); err != nil {
+		handleFileError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, gin.H{"id": id, "object": "file", "deleted": true})
+}
 func (h *FileHandler) Content(c *gin.Context) {
 	owner, ok := fileOwner(c)
 	if !ok {
@@ -157,6 +170,8 @@ func fileError(c *gin.Context, status int, kind, message string, code ...string)
 func handleFileError(c *gin.Context, err error) {
 	var bodyTooLarge *http.MaxBytesError
 	switch {
+	case errors.Is(err, service.ErrFileRemoteDeleteUnsupported):
+		fileError(c, 400, "invalid_request_error", "Deletion of managed remote file copies is not supported", "file_remote_delete_unsupported")
 	case errors.Is(err, service.ErrFileAuthorizationRevoked):
 		fileError(c, 403, "permission_denied", "File upload authorization is no longer valid", "file_authorization_revoked")
 	case errors.Is(err, service.ErrFileUploadDeadline):

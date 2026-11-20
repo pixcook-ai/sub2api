@@ -427,11 +427,11 @@ func isFileManagementRequest(method, path string) bool {
 	if method == http.MethodPost {
 		return path == "/v1/files"
 	}
-	if method != http.MethodGet || !strings.HasPrefix(path, "/v1/files/") {
+	if (method != http.MethodGet && method != http.MethodDelete) || !strings.HasPrefix(path, "/v1/files/") {
 		return false
 	}
 	parts := strings.Split(strings.TrimPrefix(path, "/v1/files/"), "/")
-	return parts[0] != "" && (len(parts) == 1 || (len(parts) == 2 && parts[1] == "content"))
+	return parts[0] != "" && (len(parts) == 1 || (method == http.MethodGet && len(parts) == 2 && parts[1] == "content"))
 }
 
 func isAsyncImageTaskRead(method, path string) bool {
