@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/managedfiles"
 	"github.com/tidwall/gjson"
@@ -44,24 +45,25 @@ func (s *OpenAIGatewayService) admitStoredResponse(ctx context.Context, account 
 	if err != nil || req.Header.Get("Content-Encoding") != "" {
 		return nil, ctx, nil, &StoredResponseLocalError{ErrBPSStoredResponseRoute}
 	}
-	apiKey, baseURL := account.GetCredential("api_key"), account.GetCredential("base_url")
 	groupID := plan.Owner.GroupID
+	requestedModel, ok := RequestedPublicModelFromContext(ctx)
+	if !ok {
+		requestedModel, _ = ctx.Value(ctxkey.Model).(string)
+	}
+	if requestedModel == "" {
+		requestedModel = plan.Request.Model
+	}
 	authorize := func(sendCtx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := CheckBPSRequestAuthorization(sendCtx, plan.Request.Model); err != nil {
+		if err := CheckBPSRequestAuthorization(sendCtx, requestedModel); err != nil {
 			return err
 		}
-		current, checkErr := s.RecheckBPSStoredResponseAccount(sendCtx, &groupID, account.ID, plan.Request.Model)
-		if checkErr != nil {
-			return ErrBPSStoredResponseRoute
+		if _, err := s.AuthorizeStoredResponseAccount(sendCtx, groupID, requestedModel, account); err != nil {
+			return err
 		}
-		latest, checkErr := BPSStoredResponsesConfigForAccount(current)
-		if checkErr != nil || latest != config || current.GetCredential("api_key") != apiKey || current.GetCredential("base_url") != baseURL {
-			return ErrBPSStoredResponseRoute
-		}
-		return nil
+		return ctx.Err()
 	}
 	if err = authorize(ctx); err != nil {
 		return nil, ctx, nil, &StoredResponseLocalError{err}
@@ -200,6 +202,12 @@ func claimStoredResponseGeneration(ctx context.Context, accountID int64) error {
 		return &StoredResponseLocalError{err}
 	}
 	if err := state.authorize(ctx); err != nil {
+		return &StoredResponseLocalError{err}
+	}
+	if err := state.caller.Err(); err != nil {
+		return &StoredResponseLocalError{err}
+	}
+	if err := ctx.Err(); err != nil {
 		return &StoredResponseLocalError{err}
 	}
 	return nil
