@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/managedfiles"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -113,19 +114,49 @@ func storedResponseUnavailable(c *gin.Context) {
 	storedResponseError(c, http.StatusServiceUnavailable, "server_error", "Response storage is temporarily unavailable", "response_storage_unavailable")
 }
 
-func handleStoredResponseError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, service.ErrStoredResponseNotFound):
-		storedResponseError(c, http.StatusNotFound, "invalid_request_error", "Response not found", "response_not_found")
-	case errors.Is(err, service.ErrStoredResponseInvalid), errors.Is(err, service.ErrStoredResponseUnsupported):
-		storedResponseError(c, http.StatusBadRequest, "invalid_request_error", "Invalid stored response request", "invalid_request_error")
-	case errors.Is(err, service.ErrStoredResponseQuota):
-		storedResponseError(c, http.StatusTooManyRequests, "rate_limit_error", "Response storage capacity is exhausted", "response_storage_quota_exceeded")
-	case errors.Is(err, service.ErrStoredResponseTooLarge):
-		storedResponseError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "Response exceeds the configured storage limit", "response_too_large")
-	case errors.Is(err, service.ErrStoredResponseConflict):
-		storedResponseError(c, http.StatusConflict, "conflict_error", "Response operation conflicts with its current state", "response_conflict")
-	default:
-		storedResponseUnavailable(c)
+type storedResponsePublicError struct {
+	status              int
+	kind, code, message string
+	param               any
+}
+
+func storedResponsePublicErrorFor(err error) storedResponsePublicError {
+	var policy *managedfiles.ResponsesPreflightError
+	if errors.As(err, &policy) {
+		return storedResponsePublicError{policy.Status, policy.Type, policy.Code, policy.Message, policy.Param}
 	}
+	switch {
+	case errors.Is(err, service.ErrBPSRequestAuthorizationRevoked):
+		return storedResponsePublicError{403, "permission_denied", "permission_denied", "Request authorization is no longer valid", nil}
+	case errors.Is(err, service.ErrBPSRequestAuthorizationUnavailable):
+		return storedResponsePublicError{503, "server_error", "response_storage_unavailable", "Request authorization is temporarily unavailable", nil}
+	case errors.Is(err, service.ErrBPSStoredResponseRoute):
+		return storedResponsePublicError{503, "server_error", "response_storage_route_unavailable", "Response storage backend route is unavailable", nil}
+	case errors.Is(err, service.ErrStoredResponseNotFound):
+		return storedResponsePublicError{404, "invalid_request_error", "response_not_found", "Response not found", nil}
+	case errors.Is(err, service.ErrStoredResponseInvalid), errors.Is(err, service.ErrStoredResponseUnsupported):
+		return storedResponsePublicError{400, "invalid_request_error", "invalid_request_error", "Invalid stored response request", nil}
+	case errors.Is(err, service.ErrStoredResponseQuota):
+		return storedResponsePublicError{429, "rate_limit_error", "response_storage_quota_exceeded", "Response storage capacity is exhausted", nil}
+	case errors.Is(err, service.ErrStoredResponseTooLarge):
+		return storedResponsePublicError{413, "invalid_request_error", "response_too_large", "Response exceeds the configured storage limit", nil}
+	case errors.Is(err, service.ErrStoredResponseConflict):
+		return storedResponsePublicError{409, "conflict_error", "response_conflict", "Response operation conflicts with its current state", nil}
+	default:
+		return storedResponsePublicError{503, "server_error", "response_storage_unavailable", "Response storage is temporarily unavailable", nil}
+	}
+}
+
+func handleStoredResponseError(c *gin.Context, err error) {
+	public := storedResponsePublicErrorFor(err)
+	c.AbortWithStatusJSON(public.status, gin.H{"error": gin.H{"type": public.kind, "code": public.code, "param": public.param, "message": public.message}})
+}
+
+func (h *OpenAIGatewayHandler) handleStoredResponseDispatchError(c *gin.Context, err error, streamStarted bool) {
+	if !streamStarted && !c.Writer.Written() {
+		handleStoredResponseError(c, err)
+		return
+	}
+	public := storedResponsePublicErrorFor(err)
+	h.handleStreamingAwareErrorWithCode(c, public.status, public.kind, public.code, public.message, true, false)
 }
