@@ -379,12 +379,16 @@ func TestOpenAIResponseFlush_FailedAndErrorEventsFlushAtBoundaries(t *testing.T)
 		require.Error(t, err)
 		require.NotNil(t, result)
 		require.Equal(t, 3, result.usage.InputTokens)
+		require.Equal(t, 1, result.usage.OutputTokens)
 		gotBody, flushes := recorder.snapshot()
+		// Failed terminals keep observed public counts and an empty output array.
+		// Assert the exact EOF bytes as well as the two flush boundaries.
 		expectedBody := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n" +
-			"data: {\"type\":\"response.failed\",\"response\":{\"created_at\":1700000000,\"error\":{\"code\":\"safety_error\",\"message\":\"blocked\"}}}\n"
+			"data: {\"type\":\"response.failed\",\"response\":{\"created_at\":1700000000,\"error\":{\"code\":\"safety_error\",\"message\":\"blocked\"},\"usage\":{\"input_tokens\":3,\"output_tokens\":1},\"output\":[]}}\n"
 		require.Equal(t, expectedBody, gotBody)
 		require.Len(t, flushes, 2)
-		require.Contains(t, flushes[1], "response.failed")
+		require.Equal(t, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n", flushes[0])
+		require.Equal(t, expectedBody, flushes[1])
 	})
 
 	t.Run("bare error synthesizes failed before done", func(t *testing.T) {
