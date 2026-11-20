@@ -192,7 +192,7 @@ func TestManagedFileURLRevalidatesRedirectDNSAndDisablesAmbientCredentials(t *te
 		t.Run(map[bool]string{true: "rebinding rejected", false: "public redirect"}[rebind], func(t *testing.T) {
 			var lookups, requests, dials atomic.Int32
 			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("ambient proxy was used"); w.WriteHeader(500) }))
-			defer func() { _ = proxy.Close() }()
+			defer proxy.Close()
 			t.Setenv("HTTP_PROXY", proxy.URL)
 			t.Setenv("HTTPS_PROXY", proxy.URL)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
