@@ -120,7 +120,7 @@ func (s *StoredResponseService) Begin(ctx context.Context, owner StoredResponseO
 		if err != nil {
 			return nil, err
 		}
-		object := value.(map[string]any)
+		object, _ := value.(map[string]any)
 		object["store"] = true
 		raw, _ := json.Marshal(object)
 		checked, err := NormalizeStoredResponseRequest(raw)
@@ -442,7 +442,7 @@ func (c *StoredResponseCapture) Abort(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	response := value.(map[string]any)
+	response, _ := value.(map[string]any)
 	response["output"], response["usage"] = output, c.observedUsage
 	return c.prepareResponse(ctx, response, true, "unknown")
 }

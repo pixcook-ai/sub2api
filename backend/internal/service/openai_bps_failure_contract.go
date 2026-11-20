@@ -300,7 +300,8 @@ func bpsStreamingFailure(account *Account, resp *http.Response, raw []byte) bool
 	if !ok || bpsFailureErrorStatus(failure, 0) == 0 {
 		return false
 	}
-	if response["status"] != strings.TrimPrefix(object["type"].(string), "response.") {
+	eventType, _ := object["type"].(string)
+	if response["status"] != strings.TrimPrefix(eventType, "response.") {
 		return false
 	}
 	_, ok = bpsFailureResponse(response)

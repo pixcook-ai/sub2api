@@ -238,7 +238,7 @@ func TestTiboRecentSamplesKeepLastTwentyFour(t *testing.T) {
 
 			tc := newTiboRouteCase(t, false, false)
 			require.NoError(t, tc.svc.persistOpenAITiboVerdict(tc.account.ID, openAITiboRouteHTTP, openAITiboVerdictRecordFor(&r), r.recent))
-			repo := tc.svc.accountRepo.(*tiboAccountRepo)
+			repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 			stored, err := repo.GetByID(context.Background(), tc.account.ID)
 			require.NoError(t, err)
 			warm := newTiboRouteCase(t, false, false)
@@ -320,7 +320,7 @@ func TestTiboRouteOrderByTier(t *testing.T) {
 func TestTiboVerdictPersistsAndWarmStarts(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false, cookieWSHTTPResponse("True"), cookieWSHTTPResponse("http ok"))
 	tc.forward(t)
-	repo := tc.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 	update, _ := repo.updateFor(tc.account.ID)
 	persisted := update[openAITiboVerdictExtraKey(openAITiboRouteHTTP)]
 	record, ok := parseOpenAITiboVerdictRecord(persisted)
@@ -347,7 +347,7 @@ func TestTiboVerdictPersistsAndWarmStarts(t *testing.T) {
 
 func TestTiboStartupLoadSeedsFromFullRows(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false)
-	repo := tc.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 	require.NoError(t, repo.UpdateExtra(context.Background(), tc.account.ID, map[string]any{
 		openAITiboVerdictExtraKey(openAITiboRouteHTTP): map[string]any{"verdict": "degraded", "model": openAICodexTicketDefaultModel,
 			"probe_identity": OpenAITiboProbeIdentity(tc.account),
@@ -362,7 +362,7 @@ func TestTiboStartupLoadSeedsFromFullRows(t *testing.T) {
 func TestTiboTickSkipsRateLimitedAccount(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false, cookieWSHTTPResponse("True"))
 	reset := time.Now().Add(time.Hour)
-	tc.svc.accountRepo.(*tiboAccountRepo).setAccount(func(a *Account) { a.RateLimitResetAt = &reset })
+	checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo).setAccount(func(a *Account) { a.RateLimitResetAt = &reset })
 	tc.svc.openaiTiboLoaded.Store(true)
 	now := time.Now()
 	state := tc.svc.openAITiboAccountState(tc.account.ID)
@@ -435,7 +435,7 @@ func TestTiboTickRespectsBudgetAndIneligibleAccounts(t *testing.T) {
 	require.Empty(t, tc.upstream.requests, "hourly budget exhausted")
 
 	// A disabled account is not sampled and its budget is refunded.
-	repo := tc.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 	repo.setAccount(func(a *Account) { a.Status = StatusDisabled })
 	state.mu.Lock()
 	state.http.probes = nil

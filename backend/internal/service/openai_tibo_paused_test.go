@@ -15,7 +15,7 @@ func newPausedTiboCase(t *testing.T) (*tiboRouteCase, *tiboAccountRepo) {
 	tc.account.Extra["codex_5h_used_percent"] = 20.0
 	tc.account.Extra["codex_7d_used_percent"] = 30.0
 	tc.account.Extra["codex_usage_updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
-	repo := tc.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 	repo.setAccount(func(a *Account) { *a = *cloneTiboAccount(tc.account) })
 	// Make first enrollment deterministic without waiting for startup jitter.
 	tc.svc.cfg.Gateway.OpenAITiboRoute.Interval = time.Nanosecond
@@ -145,7 +145,7 @@ func TestTiboPausedOAuthRechecksBeforeProbe(t *testing.T) {
 					tc.svc.recordOpenAIAccountModelTransientFailure(tc.account, openAICodexTicketDefaultModel, time.Now())
 				}
 			case "feature disabled":
-				tc.svc.settingService.settingRepo.(*tiboProbeEnabledSettingRepo).disabled = true
+				checkedFixtureValue[*tiboProbeEnabledSettingRepo](tc.svc.settingService.settingRepo).disabled = true
 				tc.svc.settingService.openAITiboSettingsCache.Store(nil)
 			}
 			// Enrollment is throttled: the run must re-read the row/settings itself.

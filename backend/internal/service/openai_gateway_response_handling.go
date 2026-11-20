@@ -2269,7 +2269,7 @@ func (s *OpenAIGatewayService) captureStoredBufferedProgress(ctx context.Context
 			}
 		}
 		if u := safeOpenAIFailureUsage(gjson.GetBytes(payload, "response.usage")); u != nil {
-			observed = mergeStoredResponseUsage(observed, u).(map[string]any)
+			observed, _ = mergeStoredResponseUsage(observed, u).(map[string]any)
 		}
 		return nil
 	}

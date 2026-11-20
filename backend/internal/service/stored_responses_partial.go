@@ -81,7 +81,7 @@ func (c *StoredResponseCapture) observeProgress(event string, object map[string]
 		if err != nil {
 			return err
 		}
-		output = value.([]any)
+		output, _ = value.([]any)
 		for len(output) <= index {
 			output = append(output, map[string]any{"type": "message", "role": "assistant", "content": []any{}})
 		}
@@ -150,7 +150,7 @@ func (c *StoredResponseCapture) observeProgress(event string, object map[string]
 			if err != nil {
 				return err
 			}
-			output = value.([]any)
+			output, _ = value.([]any)
 			for len(output) <= index {
 				output = append(output, map[string]any{"type": "message", "role": "assistant", "content": []any{}})
 			}
@@ -171,7 +171,7 @@ func (c *StoredResponseCapture) observeProgress(event string, object map[string]
 	if err != nil {
 		return err
 	}
-	snapshot := value.(map[string]any)
+	snapshot, _ := value.(map[string]any)
 	snapshot["output"], snapshot["usage"] = output, usage
 	raw, err := json.Marshal(snapshot)
 	if err != nil {

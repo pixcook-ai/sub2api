@@ -18,7 +18,7 @@ import (
 func recoverySeedInputs(t *testing.T) (string, map[string]any) {
 	t.Helper()
 	dir, gateway := managedSeedInputs(t)
-	baseline := gateway["managed_files"].(map[string]any)["description"]
+	baseline := checkedFixtureValue[map[string]any](gateway["managed_files"])["description"]
 	raw, err := json.Marshal(baseline)
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func recoverySeedInputs(t *testing.T) (string, map[string]any) {
 	if err = json.Unmarshal(raw, &negotiated); err != nil {
 		t.Fatal(err)
 	}
-	negotiated["capabilities"].(map[string]any)["metadata_recovery"] = true
+	checkedFixtureValue[map[string]any](negotiated["capabilities"])["metadata_recovery"] = true
 	raw, err = json.Marshal(negotiated)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestRecoveryFixtureReturnsOnlyPublicProofAndPreservesBaseline(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	managed, err := validateManagedFixture(managedRaw, gateway["gateway_base_url"].(string), "public-fixture-key-0123456789abcdef", true)
+	managed, err := validateManagedFixture(managedRaw, checkedFixtureValue[string](gateway["gateway_base_url"]), "public-fixture-key-0123456789abcdef", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestRecoveryFixtureReturnsOnlyPublicProofAndPreservesBaseline(t *testing.T)
 
 func resignRecoveryDescription(t *testing.T, gateway map[string]any) {
 	t.Helper()
-	recovery := gateway["metadata_recovery"].(map[string]any)
+	recovery := checkedFixtureValue[map[string]any](gateway["metadata_recovery"])
 	raw, err := json.Marshal(recovery["description"])
 	if err != nil {
 		t.Fatal(err)
@@ -128,68 +128,70 @@ func TestCLIRecoveryFixtureRejectsUnprovenNegotiationBeforeDatabase(t *testing.T
 		{"missing negotiation", func(_ *testing.T, _ string, g map[string]any) { delete(g, "metadata_recovery") }},
 		{"missing restart", func(_ *testing.T, _ string, g map[string]any) { delete(g, "gateway_restart") }},
 		{"wrong contract", func(_ *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["contract"] = "bps-metadata-recovery/2"
+			checkedFixtureValue[map[string]any](g["metadata_recovery"])["contract"] = "bps-metadata-recovery/2"
 		}},
 		{"bad hash", func(_ *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["description_sha256"] = strings.Repeat("0", 64)
+			checkedFixtureValue[map[string]any](g["metadata_recovery"])["description_sha256"] = strings.Repeat("0", 64)
 		}},
 		{"null hash", func(_ *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["description_sha256"] = nil
+			checkedFixtureValue[map[string]any](g["metadata_recovery"])["description_sha256"] = nil
 		}},
 		{"extra snapshot field", func(_ *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["private"] = true
+			checkedFixtureValue[map[string]any](g["metadata_recovery"])["private"] = true
 		}},
 		{"wrong identity", func(_ *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["identity"].(map[string]any)["backend_id"] = "different"
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["metadata_recovery"])["identity"])["backend_id"] = "different"
 		}},
 		{"extra identity field", func(_ *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["identity"].(map[string]any)["extra"] = true
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["metadata_recovery"])["identity"])["extra"] = true
 		}},
 		{"capability remains false", func(t *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["capabilities"].(map[string]any)["metadata_recovery"] = false
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["metadata_recovery"])["description"])["capabilities"])["metadata_recovery"] = false
 			resignRecoveryDescription(t, g)
 		}},
 		{"limits changed even with valid hash", func(t *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["limits"].(map[string]any)["file_bytes"] = 34603027
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["metadata_recovery"])["description"])["limits"])["file_bytes"] = 34603027
 			resignRecoveryDescription(t, g)
 		}},
 		{"exponential limit", func(t *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["limits"].(map[string]any)["file_bytes"] = json.RawMessage("209715200e0")
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["metadata_recovery"])["description"])["limits"])["file_bytes"] = json.RawMessage("209715200e0")
 			resignRecoveryDescription(t, g)
 		}},
 		{"unknown description field", func(t *testing.T, _ string, g map[string]any) {
-			g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["private"] = true
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["metadata_recovery"])["description"])["private"] = true
 			resignRecoveryDescription(t, g)
 		}},
 		{"case aliased capability", func(t *testing.T, _ string, g map[string]any) {
-			caps := g["metadata_recovery"].(map[string]any)["description"].(map[string]any)["capabilities"].(map[string]any)
+			caps := checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["metadata_recovery"])["description"])["capabilities"])
 			caps["Metadata_Recovery"] = caps["metadata_recovery"]
 			delete(caps, "metadata_recovery")
 			resignRecoveryDescription(t, g)
 		}},
 		{"baseline may not claim recovery", func(_ *testing.T, _ string, g map[string]any) {
-			g["managed_files"].(map[string]any)["description"].(map[string]any)["capabilities"].(map[string]any)["metadata_recovery"] = true
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](g["managed_files"])["description"])["capabilities"])["metadata_recovery"] = true
 		}},
 		{"boolean supervisor pid", func(_ *testing.T, _ string, g map[string]any) {
-			g["gateway_restart"].(map[string]any)["supervisor_pid"] = true
+			checkedFixtureValue[map[string]any](g["gateway_restart"])["supervisor_pid"] = true
 		}},
 		{"fractional supervisor pid", func(_ *testing.T, _ string, g map[string]any) {
-			g["gateway_restart"].(map[string]any)["supervisor_pid"] = 1.5
+			checkedFixtureValue[map[string]any](g["gateway_restart"])["supervisor_pid"] = 1.5
 		}},
-		{"unknown restart field", func(_ *testing.T, _ string, g map[string]any) { g["gateway_restart"].(map[string]any)["extra"] = true }},
+		{"unknown restart field", func(_ *testing.T, _ string, g map[string]any) {
+			checkedFixtureValue[map[string]any](g["gateway_restart"])["extra"] = true
+		}},
 		{"relative socket", func(_ *testing.T, _ string, g map[string]any) {
-			g["gateway_restart"].(map[string]any)["control_socket"] = "relative.sock"
+			checkedFixtureValue[map[string]any](g["gateway_restart"])["control_socket"] = "relative.sock"
 		}},
 		{"regular file is not socket", func(_ *testing.T, dir string, g map[string]any) {
-			g["gateway_restart"].(map[string]any)["control_socket"] = filepath.Join(dir, "gateway.key")
+			checkedFixtureValue[map[string]any](g["gateway_restart"])["control_socket"] = filepath.Join(dir, "gateway.key")
 		}},
 		{"permissive socket", func(t *testing.T, _ string, g map[string]any) {
-			if err := os.Chmod(g["gateway_restart"].(map[string]any)["control_socket"].(string), 0640); err != nil {
+			if err := os.Chmod(checkedFixtureValue[string](checkedFixtureValue[map[string]any](g["gateway_restart"])["control_socket"]), 0640); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"permissive parent", func(t *testing.T, _ string, g map[string]any) {
-			if err := os.Chmod(filepath.Dir(g["gateway_restart"].(map[string]any)["control_socket"].(string)), 0750); err != nil {
+			if err := os.Chmod(filepath.Dir(checkedFixtureValue[string](checkedFixtureValue[map[string]any](g["gateway_restart"])["control_socket"])), 0750); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -327,34 +329,40 @@ func TestCLIManagedFixtureRejectsUnprovenPolicyBeforeDatabaseAccess(t *testing.T
 		{"control zero port", func(_ string, m map[string]any) { m["control_url"] = "http://127.0.0.1:0" }},
 		{"control fragment", func(_ string, m map[string]any) { m["control_url"] = "http://127.0.0.1:8790#fragment" }},
 		{"control escaped path", func(_ string, m map[string]any) { m["control_url"] = "http://127.0.0.1:8790/%2f" }},
-		{"null description string", func(_ string, m map[string]any) { m["description"].(map[string]any)["backend_id"] = nil }},
+		{"null description string", func(_ string, m map[string]any) {
+			checkedFixtureValue[map[string]any](m["description"])["backend_id"] = nil
+		}},
 		{"fractional integer", func(_ string, m map[string]any) {
-			m["description"].(map[string]any)["limits"].(map[string]any)["file_bytes"] = 34603027.5
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](m["description"])["limits"])["file_bytes"] = 34603027.5
 		}},
 		{"unknown capability", func(_ string, m map[string]any) {
-			m["description"].(map[string]any)["capabilities"].(map[string]any)["unknown"] = true
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](m["description"])["capabilities"])["unknown"] = true
 		}},
 		{"wrong contract", func(_ string, m map[string]any) { m["contract"] = "bps-files/2" }},
-		{"wrong identity", func(_ string, m map[string]any) { m["description"].(map[string]any)["backend_id"] = "another-backend" }},
-		{"unknown description field", func(_ string, m map[string]any) { m["description"].(map[string]any)["unknown"] = true }},
+		{"wrong identity", func(_ string, m map[string]any) {
+			checkedFixtureValue[map[string]any](m["description"])["backend_id"] = "another-backend"
+		}},
+		{"unknown description field", func(_ string, m map[string]any) {
+			checkedFixtureValue[map[string]any](m["description"])["unknown"] = true
+		}},
 		{"case aliased field", func(_ string, m map[string]any) {
-			d := m["description"].(map[string]any)
+			d := checkedFixtureValue[map[string]any](m["description"])
 			d["Backend_Id"] = d["backend_id"]
 			delete(d, "backend_id")
 		}},
 		{"missing recovery declaration", func(_ string, m map[string]any) {
-			delete(m["description"].(map[string]any)["capabilities"].(map[string]any), "metadata_recovery")
+			delete(checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](m["description"])["capabilities"]), "metadata_recovery")
 		}},
 		{"unsupported recovery", func(_ string, m map[string]any) {
-			m["description"].(map[string]any)["capabilities"].(map[string]any)["metadata_recovery"] = true
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](m["description"])["capabilities"])["metadata_recovery"] = true
 		}},
 		{"insufficient large file limit", func(_ string, m map[string]any) {
-			m["description"].(map[string]any)["limits"].(map[string]any)["file_bytes"] = 33554432
+			checkedFixtureValue[map[string]any](checkedFixtureValue[map[string]any](m["description"])["limits"])["file_bytes"] = 33554432
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, gateway := managedSeedInputs(t)
-			tc.alter(dir, gateway["managed_files"].(map[string]any))
+			tc.alter(dir, checkedFixtureValue[map[string]any](gateway["managed_files"]))
 			err := runManagedSeedBeforeConfig(t, dir, gateway)
 			if err == nil || !strings.Contains(err.Error(), "managed fixture") {
 				t.Fatalf("got %v, want managed fixture refusal before config or DB", err)

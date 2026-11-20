@@ -85,9 +85,13 @@ func (api *OAuthRefreshAPI) StopOpenAIAccessVerification() {
 
 func (api *OAuthRefreshAPI) nextOpenAIAccessProbe() (id int64, failure *openAIRefreshRejection) {
 	api.openAIFailures.Range(func(key, value any) bool {
-		r := value.(*openAIRefreshRejection)
+		r, ok := value.(*openAIRefreshRejection)
+		if !ok || r == nil {
+			return true
+		}
 		if r.probe != nil && !r.probe.next.IsZero() && (failure == nil || r.probe.next.Before(failure.probe.next)) {
-			id, failure = key.(int64), r
+			id, _ = key.(int64)
+			failure = r
 		}
 		return true
 	})
@@ -110,7 +114,9 @@ func (api *OAuthRefreshAPI) runOpenAIAccessVerification(ctx context.Context, wak
 				available = time.Now().Add(openAIAccessProbeInterval)
 				// A new denial for this credential invalidates a result in
 				// flight but retains its rate limit and remaining retry budget.
-				if current, ok := api.openAIFailures.Load(id); ok && current != failure && current.(*openAIRefreshRejection).probe == schedule {
+				current, loaded := api.openAIFailures.Load(id)
+				latest, valid := current.(*openAIRefreshRejection)
+				if loaded && valid && latest != nil && current != failure && latest.probe == schedule {
 					outcome = openAIAccessProbeRetry
 				}
 				switch {

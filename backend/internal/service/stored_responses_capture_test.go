@@ -405,7 +405,7 @@ func TestStoredResponseCapturesMinimalFailureDiagnostic(t *testing.T) {
 	if err = json.Unmarshal(got, &obj); err != nil {
 		t.Fatal(err)
 	}
-	if obj["error"].(map[string]any)["code"] != "basispoints_protocol_error" || db.terminal.State != "failed" {
+	if checkedFixtureValue[map[string]any](obj["error"])["code"] != "basispoints_protocol_error" || db.terminal.State != "failed" {
 		t.Fatalf("lost safe failure: %s", got)
 	}
 }
@@ -432,10 +432,10 @@ func TestStoredResponseAbortRetainsObservedPartialTextAndUsage(t *testing.T) {
 	if err = json.Unmarshal(db.terminal.PublicResponse, &obj); err != nil {
 		t.Fatal(err)
 	}
-	if obj["usage"] == nil || len(obj["output"].([]any)) != 1 {
+	if obj["usage"] == nil || len(checkedFixtureValue[[]any](obj["output"])) != 1 {
 		t.Fatalf("lost observed facts: %s", db.terminal.PublicResponse)
 	}
-	part := obj["output"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)
+	part := checkedFixtureValue[map[string]any](checkedFixtureValue[[]any](checkedFixtureValue[map[string]any](checkedFixtureValue[[]any](obj["output"])[0])["content"])[0])
 	if part["text"] != "partial hello" {
 		t.Fatalf("lost partial text: %s", db.terminal.PublicResponse)
 	}

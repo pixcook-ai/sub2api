@@ -132,7 +132,7 @@ func (r *tiboProbeIdentityRepository) PersistTiboProbeResult(ctx context.Context
 func TestTiboRequestSnapshotUsesCurrentCredentialIdentity(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false, cookieWSHTTPResponse("True"))
 	oldIdentity := OpenAITiboProbeIdentity(tc.account)
-	repo := &tiboProbeIdentityRepository{tiboAccountRepo: tc.svc.accountRepo.(*tiboAccountRepo)}
+	repo := &tiboProbeIdentityRepository{tiboAccountRepo: checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)}
 	tc.svc.accountRepo = repo
 	repo.setAccount(func(a *Account) { a.Credentials["access_token"] = "fresh-current-token" })
 	current, err := repo.GetByID(context.Background(), tc.account.ID)
@@ -153,7 +153,7 @@ func TestTiboRequestSnapshotUsesCurrentCredentialIdentity(t *testing.T) {
 
 func TestTiboRequestSnapshotCannotBypassCurrentProxyBinding(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false, cookieWSHTTPResponse("True"))
-	repo := &tiboProbeIdentityRepository{tiboAccountRepo: tc.svc.accountRepo.(*tiboAccountRepo)}
+	repo := &tiboProbeIdentityRepository{tiboAccountRepo: checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)}
 	tc.svc.accountRepo = repo
 	proxyID := int64(771)
 	repo.setAccount(func(a *Account) { a.ProxyID, a.Proxy = &proxyID, nil })
@@ -256,7 +256,7 @@ func (r *tiboRebindAtPersistRepository) PersistTiboProbeResult(ctx context.Conte
 
 func TestTiboRejectedIdentitySampleNeverPublishesMemory(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false)
-	repo := &tiboRebindAtPersistRepository{tiboAccountRepo: tc.svc.accountRepo.(*tiboAccountRepo), rebind: true}
+	repo := &tiboRebindAtPersistRepository{tiboAccountRepo: checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo), rebind: true}
 	tc.svc.accountRepo = repo
 	state := tc.svc.openAITiboAccountState(tc.account.ID)
 	oldIdentity := OpenAITiboProbeIdentity(tc.account)
@@ -291,7 +291,7 @@ func TestTiboCredentialChangeCannotSeedPriorHistory(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
 			tc := newTiboRouteCase(t, false, false)
-			repo := tc.svc.accountRepo.(*tiboAccountRepo)
+			repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 			oldIdentity := OpenAITiboProbeIdentity(tc.account)
 			at := time.Now().Add(-time.Minute)
 			history := map[string]any{"model": openAICodexTicketDefaultModel, "verdict": "degraded", "checked_at": at.Format(time.RFC3339Nano),
@@ -373,7 +373,7 @@ func TestTiboStandaloneRecordAndPassiveHistoryRemainIdentityBound(t *testing.T) 
 
 	persisted := newTiboRouteCase(t, false, false)
 	persisted.svc.forceOpenAITiboDegraded(persisted.account, openAITiboRouteCookieWS)
-	repo := persisted.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](persisted.svc.accountRepo)
 	updates, ok := repo.updateFor(persisted.account.ID)
 	require.True(t, ok)
 	raw := updates[openAITiboVerdictExtraKey(openAITiboRouteCookieWS)]
@@ -388,7 +388,7 @@ func TestTiboReadOnlyRoutesIgnoreAnotherCredentialIdentity(t *testing.T) {
 		openAITiboProbeSample{verdict: openAITiboDegraded, probeIdentity: oldIdentity, startedAt: time.Now()})
 	require.Equal(t, openAITiboDegraded, state.http.verdict)
 	require.Equal(t, 2, tc.svc.openAITiboSchedulerTier(tc.account, openAICodexTicketDefaultModel, time.Now()))
-	repo := tc.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 	repo.setAccount(func(a *Account) { a.Credentials["access_token"] = "replacement-before-enrollment" })
 	current, err := repo.GetByID(context.Background(), tc.account.ID)
 	require.NoError(t, err)
@@ -424,7 +424,7 @@ func (r *tiboBlockedPassiveRepository) PersistTiboProbeResult(ctx context.Contex
 
 func TestTiboPassivePersistencePreservesConcurrentProbeBudgetAndRefund(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false)
-	repo := &tiboBlockedPassiveRepository{tiboAccountRepo: tc.svc.accountRepo.(*tiboAccountRepo), entered: make(chan struct{}), release: make(chan struct{})}
+	repo := &tiboBlockedPassiveRepository{tiboAccountRepo: checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo), entered: make(chan struct{}), release: make(chan struct{})}
 	tc.svc.accountRepo = repo
 	probeGate := make(chan struct{})
 	tc.svc.httpUpstream = &tiboSafeUpstream{probeGate: probeGate}

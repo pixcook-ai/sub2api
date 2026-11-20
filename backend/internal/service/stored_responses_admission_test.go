@@ -361,7 +361,7 @@ func TestStoredResponseAdmissionFreezesOriginalPublicModel(t *testing.T) {
 				ctx = context.WithValue(ctx, ctxkey.Model, "route-alias")
 				ctx = WithCompositeRouteDecision(ctx, CompositeRouteDecision{Matched: true, Source: CompositeRouteSourceExplicit, GroupID: 3, PublicModel: "public-alias", TargetPlatform: PlatformOpenAI, UpstreamModel: "route-alias", Endpoint: CompositeRouteEndpointResponses})
 				routes := &managedAccountAuthorizationRoutes{routes: []CompositeModelRoute{{ID: 21, GroupID: 3, PublicModel: "public-alias", MatchType: CompositeRouteMatchExact, TargetPlatform: PlatformOpenAI, UpstreamModel: "route-alias", Endpoint: CompositeRouteEndpointResponses, Enabled: true}}}
-				snapshot.groupRepo.(*managedAccountAuthorizationGroups).group.Platform = PlatformComposite
+				checkedFixtureValue[*managedAccountAuthorizationGroups](snapshot.groupRepo).group.Platform = PlatformComposite
 				ctx = WithManagedFileRouteResolver(ctx, NewCompositeRouteResolver(routes))
 			}
 			calls := 0
@@ -373,7 +373,7 @@ func TestStoredResponseAdmissionFreezesOriginalPublicModel(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "https://gateway.example/v1/responses", bytes.NewReader(plan.Request.UpstreamBody)).WithContext(ctx)
 			admitted, _, cleanup, err := svc.admitStoredResponse(ctx, &account, req, plan)
 			if cleanup != nil {
-				defer cleanup()
+				defer func() { _ = cleanup() }()
 			}
 			require.NoError(t, err, "pure StoredResponses accounts do not require Files capability")
 			// The authorization name is immutable even if a caller later changes its plan.
@@ -479,7 +479,7 @@ func TestStoredResponseForwardRechecksCurrentBindingBeforeEverySideEffect(t *tes
 				require.NoError(t, err)
 				upstream := &storedAdmissionUpstream{t: t, account: &account, db: db}
 				snapshot := storedAdmissionSchedulerSnapshot(3)
-				group := snapshot.groupRepo.(*managedAccountAuthorizationGroups).group
+				group := checkedFixtureValue[*managedAccountAuthorizationGroups](snapshot.groupRepo).group
 				svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: &storedAdmissionAccounts{account: &current}, schedulerSnapshot: snapshot, httpUpstream: upstream}
 				svc.SetStoredResponseService(stored)
 				original := []byte(`{"model":"gpt-5.5","input":"hello"}`)

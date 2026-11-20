@@ -251,7 +251,7 @@ func TestManagedFileURLCancellationAndTruncatedTransferCleanup(t *testing.T) {
 					return
 				}
 				w.WriteHeader(200)
-				w.(http.Flusher).Flush()
+				checkedFixtureValue[http.Flusher](w).Flush()
 				close(started)
 				<-r.Context().Done()
 			}))
@@ -302,7 +302,7 @@ func TestManagedFileURLStreamsUnknownLengthWithinSharedBudgets(t *testing.T) {
 				requests.Add(1)
 				w.Header().Set("Content-Type", "text/plain")
 				w.WriteHeader(http.StatusOK)
-				w.(http.Flusher).Flush() // no Content-Length, including for five bytes
+				checkedFixtureValue[http.Flusher](w).Flush() // no Content-Length, including for five bytes
 				_, _ = io.WriteString(w, "hello")
 			}))
 			defer server.Close()
@@ -470,7 +470,7 @@ func TestManagedFileURLDefaultLimitRejectsLargeChunkedTransferAndCleans(t *testi
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		w.(http.Flusher).Flush()
+		checkedFixtureValue[http.Flusher](w).Flush()
 		chunk := bytes.Repeat([]byte{97}, 1<<20)
 		for i := int64(0); i <= 200; i++ {
 			if _, err := w.Write(chunk); err != nil {

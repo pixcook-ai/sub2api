@@ -36,7 +36,7 @@ func TestTiboEnrollmentLiftsStaleHold(t *testing.T) {
 
 func TestTiboEnrollmentHoldsRateLimitedAccountThenResumes(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false, cookieWSHTTPResponse("True"))
-	repo := tc.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 	now := time.Now()
 	reset := now.Add(time.Hour)
 	repo.setAccount(func(a *Account) { a.RateLimitResetAt = &reset })
@@ -140,7 +140,7 @@ func TestTiboProbeRetryAfterIsCapped(t *testing.T) {
 
 func TestTiboUnknownSampleSkipsPersist(t *testing.T) {
 	tc := newTiboRouteCase(t, false, false)
-	repo := tc.svc.accountRepo.(*tiboAccountRepo)
+	repo := checkedFixtureValue[*tiboAccountRepo](tc.svc.accountRepo)
 	state := tc.svc.openAITiboAccountState(tc.account.ID)
 	state.mu.Lock()
 	state.http.recent = []openAITiboRecentSample{{Verdict: openAITiboHealthy, At: time.Now()}}
