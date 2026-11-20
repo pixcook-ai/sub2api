@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/managedfiles"
 )
 
 type ManagedInlineStagedFile struct {
@@ -30,6 +32,76 @@ type ManagedInlineStaging struct {
 	closed    bool
 	stop      func() bool
 	removeAll func(string) error
+	children  []*ManagedInlineStaging
+	delegates map[int]managedInlineStageDelegate
+}
+
+type managedInlineStageDelegate struct {
+	stage *ManagedInlineStaging
+	index int
+}
+
+// combineManagedInlineStages takes ownership of its children, including on
+// failure. Each source remains addressed by the preparation's full position.
+func combineManagedInlineStages(ctx context.Context, plan *ManagedInlinePreparation, children ...*ManagedInlineStaging) (_ *ManagedInlineStaging, resultErr error) {
+	staged := &ManagedInlineStaging{children: children, delegates: make(map[int]managedInlineStageDelegate)}
+	keep := false
+	defer func() {
+		if !keep {
+			resultErr = errors.Join(resultErr, staged.Close())
+		}
+	}()
+	if !plan.ReadyForStaging() {
+		return nil, inlineReject("incomplete_inline_budget", "input")
+	}
+	staged.files = make([]ManagedInlineStagedFile, len(plan.entries))
+	positions := make(map[managedfiles.Position]int, len(plan.entries))
+	entries := append([]managedInlineEntry(nil), plan.entries...)
+	for i, entry := range entries {
+		position := entry.description.Position
+		if _, exists := positions[position]; exists {
+			return nil, inlineReject("invalid_inline_plan", "input")
+		}
+		positions[position] = i
+		staged.files[i].ManagedInlineFileDescriptor = entry.description
+	}
+	for _, child := range children {
+		for index, file := range child.Files() {
+			if file.PublicID != "" || file.SHA256 == "" {
+				continue
+			}
+			fullIndex, exists := positions[file.Position]
+			if !exists {
+				return nil, inlineReject("invalid_inline_plan", "input")
+			}
+			entry := entries[fullIndex]
+			_, duplicate := staged.delegates[fullIndex]
+			if duplicate || entry.description.PublicID != "" || file.Bytes <= 0 || file.Filename != entry.description.Filename || (entry.sourceURL == "" && file.ManagedInlineFileDescriptor != entry.description) {
+				return nil, inlineReject("invalid_inline_plan", "input")
+			}
+			staged.files[fullIndex] = file
+			staged.delegates[fullIndex] = managedInlineStageDelegate{stage: child, index: index}
+			entries[fullIndex].description = file.ManagedInlineFileDescriptor
+		}
+	}
+	for i, entry := range entries {
+		if entry.description.PublicID == "" {
+			if _, exists := staged.delegates[i]; !exists {
+				return nil, inlineReject("invalid_inline_plan", "input")
+			}
+		}
+	}
+	if err := validateManagedInlineBudget(entries, plan.limits); err != nil {
+		return nil, err
+	}
+	staged.mu.Lock()
+	staged.stop = context.AfterFunc(ctx, func() { _ = staged.Close() })
+	staged.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	keep = true
+	return staged, nil
 }
 
 func StageManagedInlineFiles(ctx context.Context, plan *ManagedInlinePreparation, privateParent string) (_ *ManagedInlineStaging, resultErr error) {
@@ -73,7 +145,7 @@ func stageManagedInlineFiles(ctx context.Context, plan *ManagedInlinePreparation
 			return nil, err
 		}
 		staged.files[i].ManagedInlineFileDescriptor = entry.description
-		if entry.description.PublicID != "" {
+		if entry.description.PublicID != "" || entry.sourceURL != "" {
 			continue
 		}
 		if staged.root == nil {
@@ -133,7 +205,13 @@ func (s *ManagedInlineStaging) Open(index int) (io.ReadCloser, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || index < 0 || index >= len(s.names) || s.names[index] == "" {
+	if s.closed || index < 0 || index >= len(s.files) {
+		return nil, inlineReject("unavailable_inline_file", "input")
+	}
+	if delegate, ok := s.delegates[index]; ok {
+		return delegate.stage.Open(delegate.index)
+	}
+	if index >= len(s.names) || s.names[index] == "" {
 		return nil, inlineReject("unavailable_inline_file", "input")
 	}
 	file, err := s.root.Open(s.names[index])
@@ -159,6 +237,9 @@ func (s *ManagedInlineStaging) Close() error {
 		s.stop = nil
 	}
 	var result error
+	for _, child := range s.children {
+		result = errors.Join(result, child.Close())
+	}
 	for reader := range s.readers {
 		result = errors.Join(result, reader.file.Close())
 		reader.closed = true

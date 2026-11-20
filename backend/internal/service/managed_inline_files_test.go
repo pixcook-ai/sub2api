@@ -51,7 +51,7 @@ func TestManagedInlinePreflightRequiresOneSafeCanonicalSource(t *testing.T) {
 		"unsafe filename":         `"filename":"../hello.txt","file_data":"aGVsbG8="`,
 		"filename type":           `"filename":7,"file_data":"data:text/plain;base64,aGVsbG8="`,
 		"dual source":             `"file_id":"file-public","filename":"hello.txt","file_data":"aGVsbG8="`,
-		"url":                     `"file_url":"https://example.invalid/a"`,
+		"url with data":           `"file_url":"https://files.example/a.txt","file_data":"aGVsbG8="`,
 		"public wrong type":       `"file_id":7`,
 		"public syntax":           `"file_id":" ../a"`,
 		"empty bytes":             `"filename":"hello.txt","file_data":""`,
