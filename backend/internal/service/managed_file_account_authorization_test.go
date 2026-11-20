@@ -214,3 +214,77 @@ func TestManagedFileAccountAuthorizationMissingPortsAndCancellationFailClosed(t 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Zero(t, groups.reads)
 }
+
+func TestStoredResponseAccountAuthorizationUsesIndependentCapability(t *testing.T) {
+	svc, ctx, selected, _, accounts, _ := managedAccountAuthorizationFixture(false)
+	stored := storedResponsesTestAccount(selected.ID, 91001)
+	current := storedResponsesTestAccount(selected.ID, 91001)
+	accounts.current = &current
+	_, err := svc.AuthorizeStoredResponseAccount(ctx, 91001, "gpt-public", &stored)
+	require.NoError(t, err, "local Responses must not require Files support")
+	_, err = svc.AuthorizeManagedFileAccount(ctx, 91001, "gpt-public", &stored)
+	require.ErrorIs(t, err, ErrBPSRequestAuthorizationRevoked, "StoredResponses alone cannot authorize Files")
+	accounts.current = selected
+	_, err = svc.AuthorizeStoredResponseAccount(ctx, 91001, "gpt-public", selected)
+	require.ErrorIs(t, err, ErrBPSRequestAuthorizationRevoked, "Files alone cannot authorize StoredResponses")
+}
+
+func TestStoredResponseAccountAuthorizationRechecksCurrentPolicyAndBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*managedAccountAuthorizationGroups, *managedAccountAuthorizationAccounts, *managedAccountAuthorizationRoutes)
+		want   error
+	}{
+		{"unchanged", func(*managedAccountAuthorizationGroups, *managedAccountAuthorizationAccounts, *managedAccountAuthorizationRoutes) {
+		}, nil},
+		{"public model revoked", func(g *managedAccountAuthorizationGroups, _ *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			g.group.ModelAllowlist = GroupModelAllowlist{Enabled: true, Models: []string{"gpt-route"}}
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"privacy now required", func(g *managedAccountAuthorizationGroups, _ *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			g.group.RequirePrivacySet = true
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"group unavailable", func(g *managedAccountAuthorizationGroups, _ *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			g.err = errors.New("private group failure")
+		}, ErrBPSRequestAuthorizationUnavailable},
+		{"route changed", func(_ *managedAccountAuthorizationGroups, _ *managedAccountAuthorizationAccounts, r *managedAccountAuthorizationRoutes) {
+			r.routes[0].UpstreamModel = "gpt-other"
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"account disabled", func(_ *managedAccountAuthorizationGroups, a *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			a.current.Status = StatusDisabled
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"credentials rotated", func(_ *managedAccountAuthorizationGroups, a *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			a.current.Credentials["api_key"] = "new-key"
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"stored identity rotated", func(_ *managedAccountAuthorizationGroups, a *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			a.current.Credentials["bps_responses_credential_generation"] = "new-generation"
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"public mapping changed", func(_ *managedAccountAuthorizationGroups, a *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			a.current.Credentials["model_mapping"] = map[string]any{"gpt-public": "gpt-new", "gpt-route": "gpt-native"}
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"route mapping changed", func(_ *managedAccountAuthorizationGroups, a *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			a.current.Credentials["model_mapping"] = map[string]any{"gpt-public": "gpt-native", "gpt-route": "gpt-new"}
+		}, ErrBPSRequestAuthorizationRevoked},
+		{"compact mapping changed", func(_ *managedAccountAuthorizationGroups, a *managedAccountAuthorizationAccounts, _ *managedAccountAuthorizationRoutes) {
+			a.current.Credentials["compact_model_mapping"] = map[string]any{"gpt-public": "gpt-new"}
+		}, ErrBPSRequestAuthorizationRevoked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, ctx, selected, groups, accounts, routes := managedAccountAuthorizationFixture(true)
+			stored := storedResponsesTestAccount(selected.ID, 91001)
+			stored.Credentials["model_mapping"] = map[string]any{"gpt-public": "gpt-native", "gpt-route": "gpt-native"}
+			current := storedResponsesTestAccount(selected.ID, 91001)
+			current.Credentials["model_mapping"] = map[string]any{"gpt-public": "gpt-native", "gpt-route": "gpt-native"}
+			accounts.current = &current
+			tc.change(groups, accounts, routes)
+			latest, err := svc.AuthorizeStoredResponseAccount(ctx, 91001, "gpt-public", &stored)
+			if tc.want == nil {
+				require.NoError(t, err)
+				require.Equal(t, selected.ID, latest.ID)
+			} else {
+				require.ErrorIs(t, err, tc.want)
+				require.Nil(t, latest)
+				require.NotContains(t, err.Error(), "private")
+			}
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"io"
 	"mime"
+	"path"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -39,6 +40,7 @@ type ManagedInlinePublicFile struct {
 type managedInlineEntry struct {
 	description ManagedInlineFileDescriptor
 	encoded     string
+	sourceURL   string
 }
 
 // ManagedInlinePreparation holds private immutable payloads and original positions.
@@ -170,7 +172,13 @@ func PreflightManagedInlineFiles(ctx context.Context, body []byte, limits Manage
 			_, hasID := part["file_id"]
 			_, hasData := part["file_data"]
 			_, hasURL := part["file_url"]
-			if hasURL || hasID == hasData {
+			sources := 0
+			for _, present := range []bool{hasID, hasData, hasURL} {
+				if present {
+					sources++
+				}
+			}
+			if sources != 1 {
 				return nil, inlineReject("invalid_inline_file", "input")
 			}
 			if hasID {
@@ -180,6 +188,30 @@ func PreflightManagedInlineFiles(ctx context.Context, body []byte, limits Manage
 				}
 				d.PublicID = id
 				plan.checked = false
+			} else if hasURL {
+				raw, ok := part["file_url"].(string)
+				if !ok {
+					return nil, inlineReject("invalid_file_url", "input")
+				}
+				target, err := parseManagedFileURL(raw)
+				if err != nil {
+					return nil, err
+				}
+				if name, exists := part["filename"]; exists {
+					d.Filename, ok = name.(string)
+					if !ok || !validManagedInlineFilename(d.Filename) {
+						return nil, inlineReject("invalid_inline_filename", "input")
+					}
+				} else {
+					d.Filename = path.Base(target.Path)
+					if d.Filename == "." || d.Filename == "/" {
+						d.Filename = "attachment"
+					}
+					if !validManagedInlineFilename(d.Filename) {
+						return nil, inlineReject("invalid_inline_filename", "input")
+					}
+				}
+				entry.sourceURL = raw
 			} else {
 				encoded, ok := part["file_data"].(string)
 				if !ok {

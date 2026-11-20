@@ -22,6 +22,8 @@ type ManagedFileResolver struct {
 	ledger   ManagedFileRepository
 	upstream HTTPUpstream
 	cfg      *config.Config
+	// stageURLs substitutes the private downloader boundary in package tests.
+	stageURLs func(context.Context, []ManagedFileURLSource, []ManagedInlineFileDescriptor, ManagedInlineLimits, string) (*ManagedInlineStaging, error)
 }
 
 func NewManagedFileResolver(files *FileService, ledger ManagedFileRepository, upstream HTTPUpstream, cfg *config.Config) *ManagedFileResolver {
@@ -165,6 +167,30 @@ func (s *ManagedFileResolver) Prepare(ctx context.Context, owner FileOwner, body
 		plan.staging, err = StageManagedInlineFiles(ctx, checked, s.files.cfg.Root)
 		if err != nil {
 			return nil, err
+		}
+		var sources []ManagedFileURLSource
+		var existing []ManagedInlineFileDescriptor
+		for _, entry := range checked.entries {
+			if entry.sourceURL != "" {
+				sources = append(sources, ManagedFileURLSource{URL: entry.sourceURL, Filename: entry.description.Filename, Position: entry.description.Position})
+			} else {
+				existing = append(existing, entry.description)
+			}
+		}
+		if len(sources) > 0 {
+			download := s.stageURLs
+			if download == nil {
+				download = StageManagedFileURLs
+			}
+			urls, err := download(ctx, sources, existing, checked.limits, s.files.cfg.Root)
+			if err != nil {
+				return nil, err
+			}
+			combined, err := combineManagedInlineStages(ctx, checked, plan.staging, urls)
+			if err != nil {
+				return nil, err
+			}
+			plan.staging = combined
 		}
 		plan.requestID, err = fileToken()
 		if err != nil {
@@ -514,6 +540,7 @@ func managedInlineTemplate(plan *ManagedFilePlan, body []byte) ([]byte, error) {
 		part := input[position.Input].(map[string]any)["content"].([]any)[position.Part].(map[string]any)
 		part["file_id"] = ref
 		delete(part, "file_data")
+		delete(part, "file_url")
 	}
 	return json.Marshal(root)
 }

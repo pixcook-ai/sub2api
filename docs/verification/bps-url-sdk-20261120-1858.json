@@ -1,0 +1,2335 @@
+{
+  "contract_version": 1,
+  "source": "isolated-local-main-chain-public-url-supplement",
+  "run": "bps-url-final-20261120-1858",
+  "status": "passed",
+  "sdk_steps_passed": 6,
+  "sdk_steps_failed": 0,
+  "main_commit": "71879e98411947748078cbf95c49effff7ea0740",
+  "gateway_commit": "1ba185fdec438e18d77f032239531c6075ce0d7d",
+  "main_source_clean": true,
+  "gateway_source_clean": true,
+  "source_provenance_verified": true,
+  "binary_source": "launcher-built",
+  "main_binary_sha256": "af5989c744d279623b0b5a8ff3198a320011db339050d3275328e5068c9328f8",
+  "gateway_binary_sha256": "45165fa08f2caa952c1f7b58a67bb24ea608f30c8aa237ba339442f8b2a360f3",
+  "manifest_sha256": "f5498f8f59c68c4a7a5c3b73c99181bc486945490b51462dc7d948e2d4f2bc72",
+  "manifest_archive_sha256": "f5498f8f59c68c4a7a5c3b73c99181bc486945490b51462dc7d948e2d4f2bc72",
+  "manifest_archive_original_bytes_match": true,
+  "report_sha256": {
+    "python": "0859e6955bee69db30f3f8e616c310ddfe23528ab224fe4f04dacb8922fa85e4",
+    "javascript": "0e0de067cef115dfc96ce11fa30e74c920aca09c5fd6af632c60f4d22a592a06"
+  },
+  "ledger_sha256": "cfa25a550a50307476a60880eb7af85796bd3b8ca31eb2a6241980f4203d89f8",
+  "sdk_reports": [
+    {
+      "source": "local-owned-fixture-with-public-url-source",
+      "scope": "independent URL fixture, a2 scope; earlier a1 report-assertion diagnostic is excluded",
+      "main_commit": "71879e98411947748078cbf95c49effff7ea0740",
+      "gateway_commit": "1ba185fdec438e18d77f032239531c6075ce0d7d",
+      "sdk": "python",
+      "status": "passed",
+      "steps": [
+        {
+          "name": "pure-url",
+          "status": "passed",
+          "main_request_id": "de1733b5-f808-44f4-b447-6bbb326e33e1",
+          "response_id": "resp_sdk_final"
+        },
+        {
+          "name": "url-public-inline",
+          "status": "passed",
+          "main_request_id": "3e15b751-762d-41d0-a1b0-4a65cac1ac17",
+          "response_id": "resp_sdk_final"
+        },
+        {
+          "name": "private-url-denied",
+          "status": "passed",
+          "status_code": 400
+        }
+      ],
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 4,
+        "upload_attempts": 4
+      },
+      "url_content_sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+      "url_content_bytes": 8008,
+      "url_source_sha256": "5dbcce3743aa1a6154c6fe5f17a5a3b39d23d77852de1a7e73368393a4f321ff",
+      "upload_records": [
+        {
+          "native_id": "file-sdk5",
+          "filename": "license.txt",
+          "content_type": "text/plain",
+          "bytes": 8008,
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 7
+        },
+        {
+          "native_id": "file-sdk6",
+          "filename": "owned.txt",
+          "content_type": "text/plain",
+          "bytes": 14,
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 9
+        },
+        {
+          "native_id": "file-sdk7",
+          "filename": "license.txt",
+          "content_type": "text/plain",
+          "bytes": 8008,
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 10
+        },
+        {
+          "native_id": "file-sdk8",
+          "filename": "inline.txt",
+          "content_type": "text/plain",
+          "bytes": 15,
+          "sha256": "0ebc6ffddc99a8a04eec775001ade8d2d70dc48973c87a74bc8ea067dbd2176c",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 11
+        }
+      ],
+      "generation_records": [
+        {
+          "native_file_ids": [
+            "file-sdk5"
+          ],
+          "inline_file_ids": [
+            "file-sdk5"
+          ],
+          "metadata_file_ids": [],
+          "hints_verified": true,
+          "bytes_verified": true,
+          "account_id": "acct-sdk-fixture",
+          "sequence": 8
+        },
+        {
+          "native_file_ids": [
+            "file-sdk7",
+            "file-sdk6",
+            "file-sdk8"
+          ],
+          "inline_file_ids": [
+            "file-sdk7",
+            "file-sdk6",
+            "file-sdk8"
+          ],
+          "metadata_file_ids": [],
+          "hints_verified": true,
+          "bytes_verified": true,
+          "account_id": "acct-sdk-fixture",
+          "sequence": 12
+        }
+      ],
+      "public_file_id": "file-e36f7c06a80b783fba58ffce75ab94f0",
+      "key_role": "a2",
+      "request_document_order_verified": true,
+      "fixture_manifest_sha256": "f5498f8f59c68c4a7a5c3b73c99181bc486945490b51462dc7d948e2d4f2bc72",
+      "fixture_run_id": "0522ea7584ee7a41",
+      "script_sha256": "1c86a155357d5f52177265843b12389095d49f9c8fa528091c85bf17c6e0fa2f",
+      "native_before": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 4,
+        "upload_attempts": 4
+      },
+      "native_after": {
+        "http_attempts": 4,
+        "accepted_generations": 4,
+        "uploads": 8,
+        "upload_attempts": 8
+      }
+    },
+    {
+      "source": "local-owned-fixture-with-public-url-source",
+      "scope": "independent URL fixture, a2 scope; earlier a1 report-assertion diagnostic is excluded",
+      "main_commit": "71879e98411947748078cbf95c49effff7ea0740",
+      "gateway_commit": "1ba185fdec438e18d77f032239531c6075ce0d7d",
+      "sdk": "javascript",
+      "status": "passed",
+      "steps": [
+        {
+          "name": "pure-url",
+          "status": "passed",
+          "main_request_id": "d835dc7a-eb7b-4599-a463-ad83d49dfe88",
+          "response_id": "resp_sdk_final"
+        },
+        {
+          "name": "url-public-inline",
+          "status": "passed",
+          "main_request_id": "36288181-4332-4176-981e-ba9c133cf34e",
+          "response_id": "resp_sdk_final"
+        },
+        {
+          "name": "private-url-denied",
+          "status": "passed",
+          "status_code": 400
+        }
+      ],
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 4,
+        "upload_attempts": 4
+      },
+      "url_content_sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+      "url_content_bytes": 8008,
+      "url_source_sha256": "5dbcce3743aa1a6154c6fe5f17a5a3b39d23d77852de1a7e73368393a4f321ff",
+      "upload_records": [
+        {
+          "native_id": "file-sdk9",
+          "filename": "license.txt",
+          "content_type": "text/plain",
+          "bytes": 8008,
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 13
+        },
+        {
+          "native_id": "file-sdk10",
+          "filename": "owned.txt",
+          "content_type": "text/plain",
+          "bytes": 14,
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 15
+        },
+        {
+          "native_id": "file-sdk11",
+          "filename": "license.txt",
+          "content_type": "text/plain",
+          "bytes": 8008,
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 16
+        },
+        {
+          "native_id": "file-sdk12",
+          "filename": "inline.txt",
+          "content_type": "text/plain",
+          "bytes": 15,
+          "sha256": "0ebc6ffddc99a8a04eec775001ade8d2d70dc48973c87a74bc8ea067dbd2176c",
+          "account_id": "acct-sdk-fixture",
+          "sequence": 17
+        }
+      ],
+      "generation_records": [
+        {
+          "native_file_ids": [
+            "file-sdk9"
+          ],
+          "inline_file_ids": [
+            "file-sdk9"
+          ],
+          "metadata_file_ids": [],
+          "hints_verified": true,
+          "bytes_verified": true,
+          "account_id": "acct-sdk-fixture",
+          "sequence": 14
+        },
+        {
+          "native_file_ids": [
+            "file-sdk11",
+            "file-sdk10",
+            "file-sdk12"
+          ],
+          "inline_file_ids": [
+            "file-sdk11",
+            "file-sdk10",
+            "file-sdk12"
+          ],
+          "metadata_file_ids": [],
+          "hints_verified": true,
+          "bytes_verified": true,
+          "account_id": "acct-sdk-fixture",
+          "sequence": 18
+        }
+      ],
+      "public_file_id": "file-7cab8685cba625284705472d830053fc",
+      "key_role": "a2",
+      "request_document_order_verified": true,
+      "fixture_manifest_sha256": "f5498f8f59c68c4a7a5c3b73c99181bc486945490b51462dc7d948e2d4f2bc72",
+      "fixture_run_id": "0522ea7584ee7a41",
+      "script_sha256": "1c86a155357d5f52177265843b12389095d49f9c8fa528091c85bf17c6e0fa2f",
+      "native_before": {
+        "http_attempts": 4,
+        "accepted_generations": 4,
+        "uploads": 8,
+        "upload_attempts": 8
+      },
+      "native_after": {
+        "http_attempts": 6,
+        "accepted_generations": 6,
+        "uploads": 12,
+        "upload_attempts": 12
+      }
+    }
+  ],
+  "pg_readback": {
+    "contract_version": 1,
+    "scope": "supplement",
+    "source": "independent owned synthetic URL fixture read-only PostgreSQL",
+    "status": "passed",
+    "created_at": "2026-11-20T11:13:19.965127+00:00",
+    "main_commit": "71879e98411947748078cbf95c49effff7ea0740",
+    "gateway_commit": "1ba185fdec438e18d77f032239531c6075ce0d7d",
+    "run_id": "0522ea7584ee7a41",
+    "manifest_sha256": "f5498f8f59c68c4a7a5c3b73c99181bc486945490b51462dc7d948e2d4f2bc72",
+    "manifest_archive": {
+      "path": "/private/tmp/bps-url-final-20261120-1858.fixture.archived.json",
+      "sha256": "f5498f8f59c68c4a7a5c3b73c99181bc486945490b51462dc7d948e2d4f2bc72"
+    },
+    "sdk_script_sha256": "1c86a155357d5f52177265843b12389095d49f9c8fa528091c85bf17c6e0fa2f",
+    "script_sha256": "1020454c9440b958e8de2791c448cbf39c57c7c2a2493c32564e651681661fd7",
+    "report_paths": {
+      "python": "/private/tmp/bps-url-sdk-python-1858.report.json",
+      "javascript": "/private/tmp/bps-url-sdk-javascript-1858.report.json"
+    },
+    "report_sha256": {
+      "python": "0859e6955bee69db30f3f8e616c310ddfe23528ab224fe4f04dacb8922fa85e4",
+      "javascript": "0e0de067cef115dfc96ce11fa30e74c920aca09c5fd6af632c60f4d22a592a06"
+    },
+    "observed_sha256": "88f810227323a61799520387b8205baea71a4c8e8a1083046b13cecbd246ba7c",
+    "schema": {
+      "gateway_file_bindings": [
+        {
+          "name": "file_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "main_account_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "backend_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "subject_fingerprint",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "credential_generation",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "active_operation_id",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "version",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "lease_token",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "lease_until",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        }
+      ],
+      "gateway_file_read_leases": [
+        {
+          "name": "file_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "token",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "lease_until",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        }
+      ],
+      "gateway_file_remote_operations": [
+        {
+          "name": "operation_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "file_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "file_version",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "main_account_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "backend_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "subject_fingerprint",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "credential_generation",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "kind",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "state",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "sha256",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "bytes",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "filename",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "mime",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "remote_id",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "input_tokens",
+          "type": "bigint",
+          "nullable": "YES"
+        },
+        {
+          "name": "safe_error_code",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        }
+      ],
+      "gateway_files": [
+        {
+          "name": "id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "public_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "user_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "api_key_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "group_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "storage_key",
+          "type": "character",
+          "nullable": "NO"
+        },
+        {
+          "name": "filename",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "purpose",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "mime",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "state",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "bytes",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "reserved_bytes",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "sha256",
+          "type": "character",
+          "nullable": "NO"
+        },
+        {
+          "name": "upload_token",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "upload_lease_until",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "lifecycle_version",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "remote_activity_possible",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "retired_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "retire_reason",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "read_drain_until",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "local_purged_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "cleanup_token",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "cleanup_lease_until",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "upload_deadline_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        }
+      ],
+      "gateway_inline_remote_operations": [
+        {
+          "name": "operation_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "request_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "file_ref",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "sha256",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "bytes",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "filename",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "mime",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "state",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "remote_id",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "input_tokens",
+          "type": "bigint",
+          "nullable": "YES"
+        },
+        {
+          "name": "safe_error_code",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        }
+      ],
+      "gateway_inline_requests": [
+        {
+          "name": "request_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "user_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "api_key_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "group_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "main_account_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "backend_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "subject_fingerprint",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "credential_generation",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "lease_token",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "lease_until",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "released",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        }
+      ],
+      "gateway_stored_response_budgets": [
+        {
+          "name": "owner_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "rows_count",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "reserved_bytes",
+          "type": "bigint",
+          "nullable": "NO"
+        }
+      ],
+      "gateway_stored_responses": [
+        {
+          "name": "public_id",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "user_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "api_key_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "group_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "model",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "resolved_model",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "account_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "binding",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "state",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "execution_state",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "normalized_input",
+          "type": "jsonb",
+          "nullable": "YES"
+        },
+        {
+          "name": "effective_parameters",
+          "type": "jsonb",
+          "nullable": "YES"
+        },
+        {
+          "name": "public_response",
+          "type": "jsonb",
+          "nullable": "YES"
+        },
+        {
+          "name": "content_bytes",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "reserved_bytes",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "lease_token",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "lease_until",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "version",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "terminal_hash",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "finalized_token_hash",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        }
+      ],
+      "usage_logs": [
+        {
+          "name": "id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "user_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "api_key_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "account_id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "request_id",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "model",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "input_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "output_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "cache_creation_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "cache_read_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "cache_creation_5m_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "cache_creation_1h_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "input_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "output_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "cache_creation_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "cache_read_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "total_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "actual_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "stream",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "duration_ms",
+          "type": "integer",
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "group_id",
+          "type": "bigint",
+          "nullable": "YES"
+        },
+        {
+          "name": "subscription_id",
+          "type": "bigint",
+          "nullable": "YES"
+        },
+        {
+          "name": "rate_multiplier",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "first_token_ms",
+          "type": "integer",
+          "nullable": "YES"
+        },
+        {
+          "name": "billing_type",
+          "type": "smallint",
+          "nullable": "NO"
+        },
+        {
+          "name": "user_agent",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "image_count",
+          "type": "integer",
+          "nullable": "YES"
+        },
+        {
+          "name": "image_size",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "ip_address",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "account_rate_multiplier",
+          "type": "numeric",
+          "nullable": "YES"
+        },
+        {
+          "name": "reasoning_effort",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "cache_ttl_overridden",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "openai_ws_mode",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "request_type",
+          "type": "smallint",
+          "nullable": "NO"
+        },
+        {
+          "name": "service_tier",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "inbound_endpoint",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "upstream_endpoint",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "upstream_model",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "requested_model",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "channel_id",
+          "type": "bigint",
+          "nullable": "YES"
+        },
+        {
+          "name": "model_mapping_chain",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "billing_tier",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "billing_mode",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "image_output_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "image_output_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "account_stats_cost",
+          "type": "numeric",
+          "nullable": "YES"
+        },
+        {
+          "name": "image_input_size",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "image_output_size",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "image_size_source",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "image_size_breakdown",
+          "type": "jsonb",
+          "nullable": "YES"
+        },
+        {
+          "name": "video_count",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "video_resolution",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "video_duration_seconds",
+          "type": "integer",
+          "nullable": "YES"
+        },
+        {
+          "name": "long_context_billing_applied",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "image_input_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "image_input_cost",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "session_id",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "upstream_response_model",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "upstream_model_mismatch",
+          "type": "boolean",
+          "nullable": "YES"
+        },
+        {
+          "name": "native_compaction_v2",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "requested_reasoning_effort",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "upstream_request_id",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "turn_state",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "turn_state_overridden",
+          "type": "boolean",
+          "nullable": "YES"
+        },
+        {
+          "name": "turn_state_source",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "turn_state_sent",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "safety_buffering_enabled",
+          "type": "boolean",
+          "nullable": "YES"
+        },
+        {
+          "name": "safety_buffering_faster_model",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "route_gateway",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "route_pair",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "route_pair_overridden",
+          "type": "boolean",
+          "nullable": "YES"
+        },
+        {
+          "name": "route_pair_pool_gateway",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "route_pair_pool_version",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "cache_creation_30m_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "cache_creation_12h_tokens",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "reasoning_tokens",
+          "type": "integer",
+          "nullable": "YES"
+        },
+        {
+          "name": "first_answer_ms",
+          "type": "integer",
+          "nullable": "YES"
+        }
+      ],
+      "users": [
+        {
+          "name": "id",
+          "type": "bigint",
+          "nullable": "NO"
+        },
+        {
+          "name": "email",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "password_hash",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "role",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "balance",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "concurrency",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "status",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "nullable": "NO"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "username",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "nullable": "NO"
+        },
+        {
+          "name": "wechat",
+          "type": "character varying",
+          "nullable": "YES"
+        },
+        {
+          "name": "totp_secret_encrypted",
+          "type": "text",
+          "nullable": "YES"
+        },
+        {
+          "name": "totp_enabled",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "totp_enabled_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "balance_notify_enabled",
+          "type": "boolean",
+          "nullable": "NO"
+        },
+        {
+          "name": "balance_notify_threshold",
+          "type": "numeric",
+          "nullable": "YES"
+        },
+        {
+          "name": "balance_notify_extra_emails",
+          "type": "text",
+          "nullable": "NO"
+        },
+        {
+          "name": "balance_notify_threshold_type",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "total_recharged",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "signup_source",
+          "type": "character varying",
+          "nullable": "NO"
+        },
+        {
+          "name": "last_login_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "last_active_at",
+          "type": "timestamp with time zone",
+          "nullable": "YES"
+        },
+        {
+          "name": "rpm_limit",
+          "type": "integer",
+          "nullable": "NO"
+        },
+        {
+          "name": "frozen_balance",
+          "type": "numeric",
+          "nullable": "NO"
+        },
+        {
+          "name": "restrict_public_groups",
+          "type": "boolean",
+          "nullable": "NO"
+        }
+      ]
+    },
+    "log_provenance": {
+      "path": "/private/tmp/bps-sdk-main-2zsy0b4o/main.log",
+      "captured_bytes": 31580,
+      "sha256": "aea1cb1c722b09835d32791dbb57ce68bdc786864e772cc1bcef750bee91fc12",
+      "hash_scope": "first captured_bytes; later log append excluded"
+    },
+    "gates": [
+      {
+        "name": "distinct_supplement_native_ids",
+        "status": "passed"
+      },
+      {
+        "name": "url_does_not_create_extra_permanent_files",
+        "status": "passed"
+      },
+      {
+        "name": "public_operations_exact_total",
+        "status": "passed"
+      },
+      {
+        "name": "inline_requests_exact_total",
+        "status": "passed"
+      },
+      {
+        "name": "inline_operations_exact_total",
+        "status": "passed"
+      },
+      {
+        "name": "usage_exact_total",
+        "status": "passed"
+      },
+      {
+        "name": "no_duplicate_usage",
+        "status": "passed"
+      },
+      {
+        "name": "no_active_supplement_leases",
+        "status": "passed",
+        "counts": {
+          "upload": 0,
+          "cleanup": 0,
+          "binding": 0,
+          "read": 0,
+          "inline": 0,
+          "stored": 0
+        }
+      },
+      {
+        "name": "store_false_no_local_rows",
+        "status": "passed"
+      },
+      {
+        "name": "starting_balance_provenance",
+        "status": "passed"
+      },
+      {
+        "name": "balance_equals_seed_less_actual_cost",
+        "status": "passed",
+        "users": [
+          {
+            "user_id": 1,
+            "starting_balance": "100",
+            "sum_actual_cost": "0.0015000000",
+            "balance": "99.99850000",
+            "expected_balance": "99.9985000000",
+            "exact_match": true
+          },
+          {
+            "user_id": 2,
+            "starting_balance": "100",
+            "sum_actual_cost": "0",
+            "balance": "100.00000000",
+            "expected_balance": "100",
+            "exact_match": true
+          }
+        ]
+      },
+      {
+        "name": "readonly_owned_database",
+        "status": "passed"
+      },
+      {
+        "name": "unique_exact_request_id_bridges",
+        "status": "passed"
+      }
+    ],
+    "cases": [
+      {
+        "sdk": "python",
+        "status": "passed",
+        "group_id": 63,
+        "account_id": 62,
+        "api_key_id": 167,
+        "checks": [
+          {
+            "name": "one_owned_public_file_only",
+            "passed": true
+          },
+          {
+            "name": "public_file_native_bytes_sha_mime_exact",
+            "passed": true
+          },
+          {
+            "name": "one_public_upload_native_exact",
+            "passed": true
+          },
+          {
+            "name": "public_binding_released",
+            "passed": true
+          },
+          {
+            "name": "one_inline_request_per_generation",
+            "passed": true
+          },
+          {
+            "name": "inline_remote_order_matches_native_generations",
+            "passed": true
+          },
+          {
+            "name": "inline_native_bytes_sha_mime_exact",
+            "passed": true
+          },
+          {
+            "name": "all_durable_operations_succeeded",
+            "passed": true
+          },
+          {
+            "name": "one_charged_usage_per_native_generation",
+            "passed": true
+          },
+          {
+            "name": "two_distinct_report_request_ids",
+            "passed": true
+          },
+          {
+            "name": "exact_usage_request:de1733b5-f808-44f4-b447-6bbb326e33e1",
+            "passed": true
+          },
+          {
+            "name": "exact_usage_request:3e15b751-762d-41d0-a1b0-4a65cac1ac17",
+            "passed": true
+          }
+        ],
+        "public_ids": [
+          "file-e36f7c06a80b783fba58ffce75ab94f0"
+        ],
+        "operation_ids": [
+          "88761485c824250bf5be4d6f9fc6f94c"
+        ],
+        "inline_request_ids": [
+          "1e01b691a5627a68737f27f6eb75bbdf",
+          "1c24dc3516197679036135504ade67c0"
+        ],
+        "inline_operation_ids": [
+          "inline-07c822f8567ef906fbf8240498a244ff88d1e333681e74b0",
+          "inline-55b943f26fce50de4b8502251581504096013d3e243dde6c",
+          "inline-34414d4994d199c163c86c41c2cc0df2bfebb423242e287d"
+        ],
+        "usage_ids": [
+          3,
+          4
+        ],
+        "request_associations": [
+          {
+            "main_request_id": "de1733b5-f808-44f4-b447-6bbb326e33e1",
+            "client_request_id": "a66a24af-7a3b-44c0-a3e7-7697e80ecc44",
+            "ledger_request_id": "client:a66a24af-7a3b-44c0-a3e7-7697e80ecc44",
+            "usage_ids": [
+              3
+            ],
+            "log_lines": [
+              80,
+              82,
+              85
+            ]
+          },
+          {
+            "main_request_id": "3e15b751-762d-41d0-a1b0-4a65cac1ac17",
+            "client_request_id": "39959b9a-a68e-4c12-b710-7b1026641abb",
+            "ledger_request_id": "client:39959b9a-a68e-4c12-b710-7b1026641abb",
+            "usage_ids": [
+              4
+            ],
+            "log_lines": [
+              87,
+              89,
+              92
+            ]
+          }
+        ],
+        "native_uploads": [
+          {
+            "native_id": "file-sdk5",
+            "filename": "license.txt",
+            "content_type": "text/plain",
+            "bytes": 8008,
+            "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+            "sequence": 7
+          },
+          {
+            "native_id": "file-sdk6",
+            "filename": "owned.txt",
+            "content_type": "text/plain",
+            "bytes": 14,
+            "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+            "sequence": 9
+          },
+          {
+            "native_id": "file-sdk7",
+            "filename": "license.txt",
+            "content_type": "text/plain",
+            "bytes": 8008,
+            "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+            "sequence": 10
+          },
+          {
+            "native_id": "file-sdk8",
+            "filename": "inline.txt",
+            "content_type": "text/plain",
+            "bytes": 15,
+            "sha256": "0ebc6ffddc99a8a04eec775001ade8d2d70dc48973c87a74bc8ea067dbd2176c",
+            "sequence": 11
+          }
+        ],
+        "native_generations": [
+          {
+            "native_file_ids": [
+              "file-sdk5"
+            ],
+            "inline_file_ids": [
+              "file-sdk5"
+            ],
+            "metadata_file_ids": [],
+            "sequence": 8,
+            "hints_verified": true,
+            "bytes_verified": true
+          },
+          {
+            "native_file_ids": [
+              "file-sdk7",
+              "file-sdk6",
+              "file-sdk8"
+            ],
+            "inline_file_ids": [
+              "file-sdk7",
+              "file-sdk6",
+              "file-sdk8"
+            ],
+            "metadata_file_ids": [],
+            "sequence": 12,
+            "hints_verified": true,
+            "bytes_verified": true
+          }
+        ]
+      },
+      {
+        "sdk": "javascript",
+        "status": "passed",
+        "group_id": 70,
+        "account_id": 69,
+        "api_key_id": 195,
+        "checks": [
+          {
+            "name": "one_owned_public_file_only",
+            "passed": true
+          },
+          {
+            "name": "public_file_native_bytes_sha_mime_exact",
+            "passed": true
+          },
+          {
+            "name": "one_public_upload_native_exact",
+            "passed": true
+          },
+          {
+            "name": "public_binding_released",
+            "passed": true
+          },
+          {
+            "name": "one_inline_request_per_generation",
+            "passed": true
+          },
+          {
+            "name": "inline_remote_order_matches_native_generations",
+            "passed": true
+          },
+          {
+            "name": "inline_native_bytes_sha_mime_exact",
+            "passed": true
+          },
+          {
+            "name": "all_durable_operations_succeeded",
+            "passed": true
+          },
+          {
+            "name": "one_charged_usage_per_native_generation",
+            "passed": true
+          },
+          {
+            "name": "two_distinct_report_request_ids",
+            "passed": true
+          },
+          {
+            "name": "exact_usage_request:d835dc7a-eb7b-4599-a463-ad83d49dfe88",
+            "passed": true
+          },
+          {
+            "name": "exact_usage_request:36288181-4332-4176-981e-ba9c133cf34e",
+            "passed": true
+          }
+        ],
+        "public_ids": [
+          "file-7cab8685cba625284705472d830053fc"
+        ],
+        "operation_ids": [
+          "89714dcc66c8040c2b74d623e66624d9"
+        ],
+        "inline_request_ids": [
+          "dd0ad284eec50a7f8ebaaafdda1cac00",
+          "e65d8b8be98433e84c470eae1b8cf20b"
+        ],
+        "inline_operation_ids": [
+          "inline-c3efcaef39d500ab678c473bd90a4b5d145431e9235bc6df",
+          "inline-a03ca9bc6bbe61b7ac28ab3b04a4793884bac29c9c389ae8",
+          "inline-56b5af4826b1575d673a34a463c8e7a7db71e06b188aa320"
+        ],
+        "usage_ids": [
+          5,
+          6
+        ],
+        "request_associations": [
+          {
+            "main_request_id": "d835dc7a-eb7b-4599-a463-ad83d49dfe88",
+            "client_request_id": "dc561c05-990d-480d-8249-006600d19ada",
+            "ledger_request_id": "client:dc561c05-990d-480d-8249-006600d19ada",
+            "usage_ids": [
+              5
+            ],
+            "log_lines": [
+              94,
+              96,
+              99
+            ]
+          },
+          {
+            "main_request_id": "36288181-4332-4176-981e-ba9c133cf34e",
+            "client_request_id": "eb6af70d-8607-42ac-91e5-60192b560d96",
+            "ledger_request_id": "client:eb6af70d-8607-42ac-91e5-60192b560d96",
+            "usage_ids": [
+              6
+            ],
+            "log_lines": [
+              101,
+              103,
+              106
+            ]
+          }
+        ],
+        "native_uploads": [
+          {
+            "native_id": "file-sdk9",
+            "filename": "license.txt",
+            "content_type": "text/plain",
+            "bytes": 8008,
+            "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+            "sequence": 13
+          },
+          {
+            "native_id": "file-sdk10",
+            "filename": "owned.txt",
+            "content_type": "text/plain",
+            "bytes": 14,
+            "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+            "sequence": 15
+          },
+          {
+            "native_id": "file-sdk11",
+            "filename": "license.txt",
+            "content_type": "text/plain",
+            "bytes": 8008,
+            "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+            "sequence": 16
+          },
+          {
+            "native_id": "file-sdk12",
+            "filename": "inline.txt",
+            "content_type": "text/plain",
+            "bytes": 15,
+            "sha256": "0ebc6ffddc99a8a04eec775001ade8d2d70dc48973c87a74bc8ea067dbd2176c",
+            "sequence": 17
+          }
+        ],
+        "native_generations": [
+          {
+            "native_file_ids": [
+              "file-sdk9"
+            ],
+            "inline_file_ids": [
+              "file-sdk9"
+            ],
+            "metadata_file_ids": [],
+            "sequence": 14,
+            "hints_verified": true,
+            "bytes_verified": true
+          },
+          {
+            "native_file_ids": [
+              "file-sdk11",
+              "file-sdk10",
+              "file-sdk12"
+            ],
+            "inline_file_ids": [
+              "file-sdk11",
+              "file-sdk10",
+              "file-sdk12"
+            ],
+            "metadata_file_ids": [],
+            "sequence": 18,
+            "hints_verified": true,
+            "bytes_verified": true
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "api_key_role": "a2",
+      "public_files": 2,
+      "public_operations": 2,
+      "inline_requests": 4,
+      "inline_operations": 6,
+      "usage_rows": 4,
+      "native_generations": 4,
+      "active_lease_counts": {
+        "upload": 0,
+        "cleanup": 0,
+        "binding": 0,
+        "read": 0,
+        "inline": 0,
+        "stored": 0
+      },
+      "request_id_bridged_cases": 4,
+      "diagnostic_excluded": {
+        "public_files": 1,
+        "public_operations": 1,
+        "inline_requests": 2,
+        "inline_operations": 3,
+        "usage_rows": 2
+      }
+    },
+    "observed": {
+      "clock": [
+        {
+          "database": "bps_sdk_0522ea7584ee7a41",
+          "version": "PostgreSQL 18.1 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+          "transaction_read_only": "on",
+          "as_of": "2026-11-20T11:13:19.953178+00:00"
+        }
+      ],
+      "files": [
+        {
+          "id": 1,
+          "public_id": "file-36a6ab9ea31f62c232f02ab83b1d456a",
+          "user_id": 1,
+          "api_key_id": 166,
+          "group_id": 63,
+          "filename": "owned.txt",
+          "mime": "text/plain",
+          "state": "ready",
+          "bytes": 14,
+          "reserved_bytes": 14,
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "local_purged_at": null,
+          "upload_token_present": false,
+          "upload_lease_live": false,
+          "cleanup_token_present": false,
+          "cleanup_lease_live": false
+        },
+        {
+          "id": 2,
+          "public_id": "file-e36f7c06a80b783fba58ffce75ab94f0",
+          "user_id": 1,
+          "api_key_id": 167,
+          "group_id": 63,
+          "filename": "owned.txt",
+          "mime": "text/plain",
+          "state": "ready",
+          "bytes": 14,
+          "reserved_bytes": 14,
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "local_purged_at": null,
+          "upload_token_present": false,
+          "upload_lease_live": false,
+          "cleanup_token_present": false,
+          "cleanup_lease_live": false
+        },
+        {
+          "id": 3,
+          "public_id": "file-7cab8685cba625284705472d830053fc",
+          "user_id": 1,
+          "api_key_id": 195,
+          "group_id": 70,
+          "filename": "owned.txt",
+          "mime": "text/plain",
+          "state": "ready",
+          "bytes": 14,
+          "reserved_bytes": 14,
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "local_purged_at": null,
+          "upload_token_present": false,
+          "upload_lease_live": false,
+          "cleanup_token_present": false,
+          "cleanup_lease_live": false
+        }
+      ],
+      "bindings": [
+        {
+          "file_id": 1,
+          "main_account_id": 62,
+          "active_operation_id": "629bb272c7858fd93faf9e396c9f43da",
+          "version": 2,
+          "lease_present": false,
+          "lease_live": false,
+          "identity_matches": true
+        },
+        {
+          "file_id": 2,
+          "main_account_id": 62,
+          "active_operation_id": "88761485c824250bf5be4d6f9fc6f94c",
+          "version": 2,
+          "lease_present": false,
+          "lease_live": false,
+          "identity_matches": true
+        },
+        {
+          "file_id": 3,
+          "main_account_id": 69,
+          "active_operation_id": "89714dcc66c8040c2b74d623e66624d9",
+          "version": 2,
+          "lease_present": false,
+          "lease_live": false,
+          "identity_matches": true
+        }
+      ],
+      "operations": [
+        {
+          "operation_id": "629bb272c7858fd93faf9e396c9f43da",
+          "file_id": 1,
+          "main_account_id": 62,
+          "kind": "upload",
+          "state": "succeeded",
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "bytes": 14,
+          "filename": "owned.txt",
+          "mime": "text/plain",
+          "remote_id": "file-sdk2",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:02:56.969768+00:00",
+          "completed_at": "2026-11-20T11:02:56.983204+00:00",
+          "identity_matches": true
+        },
+        {
+          "operation_id": "88761485c824250bf5be4d6f9fc6f94c",
+          "file_id": 2,
+          "main_account_id": 62,
+          "kind": "upload",
+          "state": "succeeded",
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "bytes": 14,
+          "filename": "owned.txt",
+          "mime": "text/plain",
+          "remote_id": "file-sdk6",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:24.384076+00:00",
+          "completed_at": "2026-11-20T11:11:24.397468+00:00",
+          "identity_matches": true
+        },
+        {
+          "operation_id": "89714dcc66c8040c2b74d623e66624d9",
+          "file_id": 3,
+          "main_account_id": 69,
+          "kind": "upload",
+          "state": "succeeded",
+          "sha256": "4cb21235cec85ebcced1d999fded16d2ca2d1be4612fd840aa9502e85b6bb74c",
+          "bytes": 14,
+          "filename": "owned.txt",
+          "mime": "text/plain",
+          "remote_id": "file-sdk10",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:27.232042+00:00",
+          "completed_at": "2026-11-20T11:11:27.246692+00:00",
+          "identity_matches": true
+        }
+      ],
+      "read_leases": [],
+      "inline_requests": [
+        {
+          "request_id": "ab105bdc506c39e9834b394a89006e19",
+          "user_id": 1,
+          "api_key_id": 166,
+          "group_id": 63,
+          "main_account_id": 62,
+          "released": true,
+          "created_at": "2026-11-20T11:02:55.670128+00:00",
+          "lease_until": "2026-11-20T11:17:55.670128+00:00",
+          "lease_live": false,
+          "identity_matches": true
+        },
+        {
+          "request_id": "9f4eced9d8f7afd7c4327e1ab7ea6798",
+          "user_id": 1,
+          "api_key_id": 166,
+          "group_id": 63,
+          "main_account_id": 62,
+          "released": true,
+          "created_at": "2026-11-20T11:02:56.947945+00:00",
+          "lease_until": "2026-11-20T11:17:56.947945+00:00",
+          "lease_live": false,
+          "identity_matches": true
+        },
+        {
+          "request_id": "1e01b691a5627a68737f27f6eb75bbdf",
+          "user_id": 1,
+          "api_key_id": 167,
+          "group_id": 63,
+          "main_account_id": 62,
+          "released": true,
+          "created_at": "2026-11-20T11:11:22.976927+00:00",
+          "lease_until": "2026-11-20T11:26:22.976927+00:00",
+          "lease_live": false,
+          "identity_matches": true
+        },
+        {
+          "request_id": "1c24dc3516197679036135504ade67c0",
+          "user_id": 1,
+          "api_key_id": 167,
+          "group_id": 63,
+          "main_account_id": 62,
+          "released": true,
+          "created_at": "2026-11-20T11:11:24.361411+00:00",
+          "lease_until": "2026-11-20T11:26:24.36141+00:00",
+          "lease_live": false,
+          "identity_matches": true
+        },
+        {
+          "request_id": "dd0ad284eec50a7f8ebaaafdda1cac00",
+          "user_id": 1,
+          "api_key_id": 195,
+          "group_id": 70,
+          "main_account_id": 69,
+          "released": true,
+          "created_at": "2026-11-20T11:11:26.214862+00:00",
+          "lease_until": "2026-11-20T11:26:26.214861+00:00",
+          "lease_live": false,
+          "identity_matches": true
+        },
+        {
+          "request_id": "e65d8b8be98433e84c470eae1b8cf20b",
+          "user_id": 1,
+          "api_key_id": 195,
+          "group_id": 70,
+          "main_account_id": 69,
+          "released": true,
+          "created_at": "2026-11-20T11:11:27.20355+00:00",
+          "lease_until": "2026-11-20T11:26:27.203549+00:00",
+          "lease_live": false,
+          "identity_matches": true
+        }
+      ],
+      "inline_operations": [
+        {
+          "operation_id": "inline-596bd4100c825e9841fe5ffd99d3faf840940270ea551fba",
+          "request_id": "ab105bdc506c39e9834b394a89006e19",
+          "file_ref": "file-inline-cf2d061f38f38370e64de8a9e57972bf",
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "bytes": 8008,
+          "filename": "license.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk1",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:02:55.699647+00:00",
+          "completed_at": "2026-11-20T11:02:55.714988+00:00"
+        },
+        {
+          "operation_id": "inline-de5635e93e3bc347db4b5f412125f24172087528f87d8e48",
+          "request_id": "9f4eced9d8f7afd7c4327e1ab7ea6798",
+          "file_ref": "file-inline-a023dd62c66eec2669820caa8a3d0b55",
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "bytes": 8008,
+          "filename": "license.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk3",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:02:56.995515+00:00",
+          "completed_at": "2026-11-20T11:02:57.007377+00:00"
+        },
+        {
+          "operation_id": "inline-9cdc6d0f3c557f7a38a4723706f21903984486ed348dc7a5",
+          "request_id": "9f4eced9d8f7afd7c4327e1ab7ea6798",
+          "file_ref": "file-inline-996c7e2d1c1a9f886db48a9e7bf859f7",
+          "sha256": "0ebc6ffddc99a8a04eec775001ade8d2d70dc48973c87a74bc8ea067dbd2176c",
+          "bytes": 15,
+          "filename": "inline.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk4",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:02:57.017244+00:00",
+          "completed_at": "2026-11-20T11:02:57.028833+00:00"
+        },
+        {
+          "operation_id": "inline-07c822f8567ef906fbf8240498a244ff88d1e333681e74b0",
+          "request_id": "1e01b691a5627a68737f27f6eb75bbdf",
+          "file_ref": "file-inline-a3e4c85647d427a2bb6f7642bb301d95",
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "bytes": 8008,
+          "filename": "license.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk5",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:22.990465+00:00",
+          "completed_at": "2026-11-20T11:11:22.998835+00:00"
+        },
+        {
+          "operation_id": "inline-55b943f26fce50de4b8502251581504096013d3e243dde6c",
+          "request_id": "1c24dc3516197679036135504ade67c0",
+          "file_ref": "file-inline-07e50c411cbfef5967a9db94425d142f",
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "bytes": 8008,
+          "filename": "license.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk7",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:24.410045+00:00",
+          "completed_at": "2026-11-20T11:11:24.423821+00:00"
+        },
+        {
+          "operation_id": "inline-34414d4994d199c163c86c41c2cc0df2bfebb423242e287d",
+          "request_id": "1c24dc3516197679036135504ade67c0",
+          "file_ref": "file-inline-0fc01f5323a41174219aad0ee68bf3cc",
+          "sha256": "0ebc6ffddc99a8a04eec775001ade8d2d70dc48973c87a74bc8ea067dbd2176c",
+          "bytes": 15,
+          "filename": "inline.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk8",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:24.434259+00:00",
+          "completed_at": "2026-11-20T11:11:24.446176+00:00"
+        },
+        {
+          "operation_id": "inline-c3efcaef39d500ab678c473bd90a4b5d145431e9235bc6df",
+          "request_id": "dd0ad284eec50a7f8ebaaafdda1cac00",
+          "file_ref": "file-inline-f00c58a845d1d2a72772510eaca16383",
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "bytes": 8008,
+          "filename": "license.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk9",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:26.229088+00:00",
+          "completed_at": "2026-11-20T11:11:26.238322+00:00"
+        },
+        {
+          "operation_id": "inline-a03ca9bc6bbe61b7ac28ab3b04a4793884bac29c9c389ae8",
+          "request_id": "e65d8b8be98433e84c470eae1b8cf20b",
+          "file_ref": "file-inline-cf833b72611e154096b4fd2d3f45ac52",
+          "sha256": "b6869c8984701701bc2e6973b6ffc750d497f845cc1a65a106e9301590a13ab0",
+          "bytes": 8008,
+          "filename": "license.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk11",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:27.25555+00:00",
+          "completed_at": "2026-11-20T11:11:27.267452+00:00"
+        },
+        {
+          "operation_id": "inline-56b5af4826b1575d673a34a463c8e7a7db71e06b188aa320",
+          "request_id": "e65d8b8be98433e84c470eae1b8cf20b",
+          "file_ref": "file-inline-417a50fed8c4ebd32908a8ec36609286",
+          "sha256": "0ebc6ffddc99a8a04eec775001ade8d2d70dc48973c87a74bc8ea067dbd2176c",
+          "bytes": 15,
+          "filename": "inline.txt",
+          "mime": "text/plain",
+          "state": "succeeded",
+          "remote_id": "file-sdk12",
+          "input_tokens": 8,
+          "started_at": "2026-11-20T11:11:27.278191+00:00",
+          "completed_at": "2026-11-20T11:11:27.291093+00:00"
+        }
+      ],
+      "stored": [],
+      "usage": [
+        {
+          "id": 1,
+          "request_id": "client:f6a7eb21-cc5c-4ba1-90fa-c0936d370060",
+          "user_id": 1,
+          "api_key_id": 166,
+          "group_id": 63,
+          "account_id": 62,
+          "model": "gpt-6-astra",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_tokens": 0,
+          "total_cost": "0.0002500000",
+          "actual_cost": "0.0002500000",
+          "created_at": "2026-11-20T11:02:55.76298+00:00"
+        },
+        {
+          "id": 2,
+          "request_id": "client:66469e82-4f60-4c91-b892-5c9f41151972",
+          "user_id": 1,
+          "api_key_id": 166,
+          "group_id": 63,
+          "account_id": 62,
+          "model": "gpt-6-astra",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_tokens": 0,
+          "total_cost": "0.0002500000",
+          "actual_cost": "0.0002500000",
+          "created_at": "2026-11-20T11:02:57.077463+00:00"
+        },
+        {
+          "id": 3,
+          "request_id": "client:a66a24af-7a3b-44c0-a3e7-7697e80ecc44",
+          "user_id": 1,
+          "api_key_id": 167,
+          "group_id": 63,
+          "account_id": 62,
+          "model": "gpt-6-astra",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_tokens": 0,
+          "total_cost": "0.0002500000",
+          "actual_cost": "0.0002500000",
+          "created_at": "2026-11-20T11:11:23.022474+00:00"
+        },
+        {
+          "id": 4,
+          "request_id": "client:39959b9a-a68e-4c12-b710-7b1026641abb",
+          "user_id": 1,
+          "api_key_id": 167,
+          "group_id": 63,
+          "account_id": 62,
+          "model": "gpt-6-astra",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_tokens": 0,
+          "total_cost": "0.0002500000",
+          "actual_cost": "0.0002500000",
+          "created_at": "2026-11-20T11:11:24.497046+00:00"
+        },
+        {
+          "id": 5,
+          "request_id": "client:dc561c05-990d-480d-8249-006600d19ada",
+          "user_id": 1,
+          "api_key_id": 195,
+          "group_id": 70,
+          "account_id": 69,
+          "model": "gpt-6-astra",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_tokens": 0,
+          "total_cost": "0.0002500000",
+          "actual_cost": "0.0002500000",
+          "created_at": "2026-11-20T11:11:26.261753+00:00"
+        },
+        {
+          "id": 6,
+          "request_id": "client:eb6af70d-8607-42ac-91e5-60192b560d96",
+          "user_id": 1,
+          "api_key_id": 195,
+          "group_id": 70,
+          "account_id": 69,
+          "model": "gpt-6-astra",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_tokens": 0,
+          "total_cost": "0.0002500000",
+          "actual_cost": "0.0002500000",
+          "created_at": "2026-11-20T11:11:27.350552+00:00"
+        }
+      ],
+      "balances": [
+        {
+          "id": 1,
+          "balance": "99.99850000",
+          "total_actual_cost": "0.0015000000"
+        },
+        {
+          "id": 2,
+          "balance": "100.00000000",
+          "total_actual_cost": "0"
+        }
+      ]
+    },
+    "limitations": [
+      "Independent supplemental URL fixture; does not replace or alter the frozen 1836 matrix or PostgreSQL snapshot.",
+      "Report-native SDK/SSRF assertions and URL source fetching remain independent evidence; no SDK or HTTP request issued by this readback.",
+      "Final durable facts only; filesystem contents and future TTL cleanup require separate evidence."
+    ]
+  },
+  "diagnostic_history": [
+    {
+      "run": "1836 post-matrix URL diagnostic",
+      "status": "failed",
+      "reason": "synthetic native fixture retained 346031074 bytes; 512 MiB total budget with 200 MiB admission reservation rejects subsequent upload before reading the 8008-byte URL body; mapped 507 to private502 to public503",
+      "production_downloader_change": false
+    },
+    {
+      "run": "1858 a1 URL diagnostic",
+      "status": "report_assertion_failed",
+      "reason": "both JSON responses completed and private URL denied; diagnostic script wrongly assumed URL uploads were adjacent, while public upload legitimately precedes mixed inline uploads",
+      "remediation": "assert request document order via exact native IDs; rerun both SDKs in separately correlated a2 scope",
+      "a1_facts_preserved_in_pg": true
+    }
+  ],
+  "limitations": [
+    "This is separate from the 124-case conformance matrix and uses a2 keys; a1 diagnostic records are preserved and excluded from selected-case correlations.",
+    "URL SDK coverage is JSON pure URL, URL/public/inline mixed input, and one private-address rejection; it is not arbitrary URL, URL SSE, complete SSRF coverage or completion of ticket12.",
+    "No real BPS inference, production change, deployment, account activation or Issue closure.",
+    "Database evidence does not establish physical filesystem cleanup, future TTL worker behavior or real document understanding."
+  ]
+}

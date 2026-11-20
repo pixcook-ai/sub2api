@@ -18,6 +18,16 @@ func WithManagedFileRouteResolver(ctx context.Context, resolver *CompositeRouteR
 // AuthorizeManagedFileAccount is called before native work and generation.
 // requestedModel is the original client model, before route/account rewriting.
 func (s *OpenAIGatewayService) AuthorizeManagedFileAccount(ctx context.Context, groupID int64, requestedModel string, selected *Account) (*Account, error) {
+	return s.authorizeBPSAccount(ctx, groupID, requestedModel, selected, OpenAIEndpointCapabilityBPSFiles)
+}
+
+// AuthorizeStoredResponseAccount uses the independent local Responses contract.
+// requestedModel is the original client model, before route/account rewriting.
+func (s *OpenAIGatewayService) AuthorizeStoredResponseAccount(ctx context.Context, groupID int64, requestedModel string, selected *Account) (*Account, error) {
+	return s.authorizeBPSAccount(ctx, groupID, requestedModel, selected, OpenAIEndpointCapabilityBPSLocalResponses)
+}
+
+func (s *OpenAIGatewayService) authorizeBPSAccount(ctx context.Context, groupID int64, requestedModel string, selected *Account, capability OpenAIEndpointCapability) (*Account, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -59,20 +69,37 @@ func (s *OpenAIGatewayService) AuthorizeManagedFileAccount(ctx context.Context, 
 	// reusing the ordinary account eligibility path against the owning row.
 	freshCtx := context.WithValue(ctx, ctxkey.Group, group)
 	freshCtx = context.WithValue(freshCtx, openAIProfitControlGateCtxKey{}, (*openAIProfitControlGate)(nil))
-	current, err := s.RecheckManagedFileAccount(freshCtx, &groupID, selected.ID, forwardModel)
+	var current *Account
+	switch capability {
+	case OpenAIEndpointCapabilityBPSFiles:
+		current, err = s.RecheckManagedFileAccount(freshCtx, &groupID, selected.ID, forwardModel)
+	case OpenAIEndpointCapabilityBPSLocalResponses:
+		current, err = s.RecheckBPSStoredResponseAccount(freshCtx, &groupID, selected.ID, forwardModel)
+	default:
+		return nil, ErrBPSRequestAuthorizationRevoked
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		return nil, ErrBPSRequestAuthorizationRevoked
 	}
-	before, err := BPSFilesConfigForAccount(selected)
-	if err != nil {
+	if current.GetCredential("api_key") != selected.GetCredential("api_key") || current.GetCredential("base_url") != selected.GetCredential("base_url") {
 		return nil, ErrBPSRequestAuthorizationRevoked
 	}
-	after, err := BPSFilesConfigForAccount(current)
-	if err != nil || before != after || current.GetCredential("api_key") != selected.GetCredential("api_key") || current.GetCredential("base_url") != selected.GetCredential("base_url") {
-		return nil, ErrBPSRequestAuthorizationRevoked
+	switch capability {
+	case OpenAIEndpointCapabilityBPSFiles:
+		before, beforeErr := BPSFilesConfigForAccount(selected)
+		after, afterErr := BPSFilesConfigForAccount(current)
+		if beforeErr != nil || afterErr != nil || before != after {
+			return nil, ErrBPSRequestAuthorizationRevoked
+		}
+	case OpenAIEndpointCapabilityBPSLocalResponses:
+		before, beforeErr := BPSStoredResponsesConfigForAccount(selected)
+		after, afterErr := BPSStoredResponsesConfigForAccount(current)
+		if beforeErr != nil || afterErr != nil || before != after {
+			return nil, ErrBPSRequestAuthorizationRevoked
+		}
 	}
 	for _, model := range []string{requestedModel, forwardModel} {
 		for _, compact := range []bool{false, true} {

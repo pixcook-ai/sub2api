@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/managedfiles"
 	"github.com/gin-gonic/gin"
@@ -115,7 +116,7 @@ func TestStoredResponseForwardPreflightsFinalWireBeforeReservationAndSingleSend(
 	stored, err := NewStoredResponseService(db, cfg)
 	require.NoError(t, err)
 	upstream := &storedAdmissionUpstream{t: t, account: &account, db: db}
-	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: storedAdmissionSchedulerSnapshot(3), httpUpstream: upstream}
 	svc.SetStoredResponseService(stored)
 	original := []byte(`{"model":"gpt-5.5","input":"hello","instructions":"client instructions"}`)
 	plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
@@ -147,7 +148,7 @@ func TestStoredResponseForwardRejectsBadAckWithoutReplayOrLosingObservedUsage(t 
 	stored, err := NewStoredResponseService(db, cfg)
 	require.NoError(t, err)
 	upstream := &storedAdmissionUpstream{t: t, account: &account, db: db, badAck: true}
-	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: storedAdmissionSchedulerSnapshot(3), httpUpstream: upstream}
 	svc.SetStoredResponseService(stored)
 	original, _ := json.Marshal(map[string]any{"model": "gpt-5.5", "input": "hello"})
 	plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
@@ -185,7 +186,7 @@ func TestStoredResponseForwardPreflightPolicyPreservesPublicErrorWithoutReservat
 	stored, err := NewStoredResponseService(db, cfg)
 	require.NoError(t, err)
 	upstream := &storedAdmissionUpstream{t: t, account: &account, db: db, reject: true}
-	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: storedAdmissionSchedulerSnapshot(3), httpUpstream: upstream}
 	svc.SetStoredResponseService(stored)
 	original, _ := json.Marshal(map[string]any{"model": "gpt-5.5", "input": "hello"})
 	plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
@@ -226,7 +227,7 @@ func TestStoredResponseForwardKeepsHeaderDeadlineDuringAdmissionAndSend(t *testi
 			}
 			serviceCfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 			serviceCfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 1
-			svc := &OpenAIGatewayService{cfg: serviceCfg, accountRepo: &storedAdmissionAccounts{account: &account}, httpUpstream: upstream}
+			svc := &OpenAIGatewayService{cfg: serviceCfg, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: storedAdmissionSchedulerSnapshot(3), httpUpstream: upstream}
 			svc.SetStoredResponseService(stored)
 			original := []byte(`{"model":"gpt-5.5","input":"hello","stream":true}`)
 			plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
@@ -265,7 +266,7 @@ func TestStoredResponseAdmissionRejectsWireMemoryOverloadBeforePreflight(t *test
 	stored, err := NewStoredResponseService(db, cfg)
 	require.NoError(t, err)
 	upstream := &storedAdmissionUpstream{t: t, account: &account, db: db}
-	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: storedAdmissionSchedulerSnapshot(3), httpUpstream: upstream}
 	svc.SetStoredResponseService(stored)
 	original := []byte(`{"model":"gpt-5.5","input":"hello"}`)
 	plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
@@ -295,7 +296,7 @@ func TestStoredResponseForwardHTTPFailureCapturesAfterHeaderGuardBodyClose(t *te
 	upstream := &storedAdmissionUpstream{t: t, account: &account, db: db, bpsFailure: true}
 	serviceCfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}
 	serviceCfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 1
-	svc := &OpenAIGatewayService{cfg: serviceCfg, accountRepo: &storedAdmissionAccounts{account: &account}, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{cfg: serviceCfg, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: storedAdmissionSchedulerSnapshot(3), httpUpstream: upstream}
 	svc.SetStoredResponseService(stored)
 	original := []byte(`{"model":"gpt-5.5","input":"hello","stream":true}`)
 	plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
@@ -335,6 +336,77 @@ func storedAdmissionAuthorizedContext(ctx context.Context) context.Context {
 	return WithBPSRequestReauthorize(ctx, func(ctx context.Context, model string) error { return ctx.Err() })
 }
 
+func storedAdmissionSchedulerSnapshot(groupID int64) *SchedulerSnapshotService {
+	return &SchedulerSnapshotService{groupRepo: &managedAccountAuthorizationGroups{group: &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true}}}
+}
+
+func TestStoredResponseAdmissionFreezesOriginalPublicModel(t *testing.T) {
+	for _, composite := range []bool{false, true} {
+		t.Run(map[bool]string{true: "composite-public-precedes-context-model", false: "context-model-precedes-wire"}[composite], func(t *testing.T) {
+			account := storedResponsesTestAccount(14008, 3)
+			account.Credentials["model_mapping"] = map[string]any{"public-alias": "gpt-5.5", "route-alias": "gpt-5.5"}
+			db := &captureTestDB{}
+			cfg := DefaultStoredResponseConfig()
+			cfg.Enabled = true
+			stored, err := NewStoredResponseService(db, cfg)
+			require.NoError(t, err)
+			upstream := &storedAdmissionUpstream{t: t, account: &account, db: db}
+			snapshot := storedAdmissionSchedulerSnapshot(3)
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: snapshot, httpUpstream: upstream}
+			svc.SetStoredResponseService(stored)
+			plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, []byte(`{"model":"gpt-5.5","input":"hello"}`))
+			require.NoError(t, err)
+			ctx := context.WithValue(context.Background(), ctxkey.Model, "public-alias")
+			if composite {
+				ctx = context.WithValue(ctx, ctxkey.Model, "route-alias")
+				ctx = WithCompositeRouteDecision(ctx, CompositeRouteDecision{Matched: true, Source: CompositeRouteSourceExplicit, GroupID: 3, PublicModel: "public-alias", TargetPlatform: PlatformOpenAI, UpstreamModel: "route-alias", Endpoint: CompositeRouteEndpointResponses})
+				routes := &managedAccountAuthorizationRoutes{routes: []CompositeModelRoute{{ID: 21, GroupID: 3, PublicModel: "public-alias", MatchType: CompositeRouteMatchExact, TargetPlatform: PlatformOpenAI, UpstreamModel: "route-alias", Endpoint: CompositeRouteEndpointResponses, Enabled: true}}}
+				snapshot.groupRepo.(*managedAccountAuthorizationGroups).group.Platform = PlatformComposite
+				ctx = WithManagedFileRouteResolver(ctx, NewCompositeRouteResolver(routes))
+			}
+			calls := 0
+			ctx = WithBPSRequestReauthorize(ctx, func(_ context.Context, stringModel string) error {
+				require.Equal(t, "public-alias", stringModel, "live authorization must never use a rewritten model")
+				calls++
+				return nil
+			})
+			req := httptest.NewRequest(http.MethodPost, "https://gateway.example/v1/responses", bytes.NewReader(plan.Request.UpstreamBody)).WithContext(ctx)
+			admitted, _, cleanup, err := svc.admitStoredResponse(ctx, &account, req, plan)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			require.NoError(t, err, "pure StoredResponses accounts do not require Files capability")
+			// The authorization name is immutable even if a caller later changes its plan.
+			plan.Request.Model = "later-mutation"
+			require.NoError(t, claimStoredResponseGeneration(admitted.Context(), account.ID))
+			require.Equal(t, 3, calls)
+			require.Equal(t, 1, upstream.preflight)
+			require.Equal(t, 1, db.reservations)
+		})
+	}
+}
+
+func TestStoredResponseGenerationRejectsCancellationDuringAuthorization(t *testing.T) {
+	for _, cancelCaller := range []bool{true, false} {
+		t.Run(map[bool]string{true: "original-caller", false: "send-context"}[cancelCaller], func(t *testing.T) {
+			caller, cancelCallerContext := context.WithCancel(context.Background())
+			defer cancelCallerContext()
+			send, cancelSend := context.WithCancel(context.Background())
+			defer cancelSend()
+			state := &storedResponseGeneration{caller: caller, accountID: 14007, authorize: func(context.Context) error {
+				if cancelCaller {
+					cancelCallerContext()
+				} else {
+					cancelSend()
+				}
+				return nil
+			}}
+			send = context.WithValue(send, storedResponseGenerationKey{}, state)
+			require.ErrorIs(t, claimStoredResponseGeneration(send, state.accountID), context.Canceled, "authorization cannot revive a cancelled caller or send")
+		})
+	}
+}
+
 func TestStoredResponseForwardRechecksLivePermissionBeforeEverySideEffect(t *testing.T) {
 	for _, denyAt := range []int{0, 1, 2, 3} {
 		t.Run(map[int]string{0: "missing-port", 1: "before-preflight", 2: "before-begin", 3: "before-send"}[denyAt], func(t *testing.T) {
@@ -345,7 +417,7 @@ func TestStoredResponseForwardRechecksLivePermissionBeforeEverySideEffect(t *tes
 			stored, err := NewStoredResponseService(db, cfg)
 			require.NoError(t, err)
 			upstream := &storedAdmissionUpstream{t: t, account: &account, db: db}
-			svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, httpUpstream: upstream}
+			svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{AllowInsecureHTTP: true}}}, accountRepo: &storedAdmissionAccounts{account: &account}, schedulerSnapshot: storedAdmissionSchedulerSnapshot(3), httpUpstream: upstream}
 			svc.SetStoredResponseService(stored)
 			original := []byte(`{"model":"gpt-5.5","input":"hello"}`)
 			plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
@@ -389,5 +461,75 @@ func TestStoredResponseForwardRechecksLivePermissionBeforeEverySideEffect(t *tes
 				require.Equal(t, "failed", db.terminal.State)
 			}
 		})
+	}
+}
+
+func TestStoredResponseForwardRechecksCurrentBindingBeforeEverySideEffect(t *testing.T) {
+	for _, change := range []string{"group-revoked", "effective-mapping-changed", "composite-route-changed"} {
+		for _, changeAt := range []int{1, 2, 3} {
+			t.Run(change+"/"+map[int]string{1: "before-preflight", 2: "before-begin", 3: "before-send"}[changeAt], func(t *testing.T) {
+				account := storedResponsesTestAccount(14009, 3)
+				current := storedResponsesTestAccount(account.ID, 3)
+				account.Credentials["model_mapping"] = map[string]any{"gpt-5.5": "gpt-native", "gpt-route": "gpt-native"}
+				current.Credentials["model_mapping"] = map[string]any{"gpt-5.5": "gpt-native", "gpt-route": "gpt-native"}
+				db := &captureTestDB{}
+				cfg := DefaultStoredResponseConfig()
+				cfg.Enabled = true
+				stored, err := NewStoredResponseService(db, cfg)
+				require.NoError(t, err)
+				upstream := &storedAdmissionUpstream{t: t, account: &account, db: db}
+				snapshot := storedAdmissionSchedulerSnapshot(3)
+				group := snapshot.groupRepo.(*managedAccountAuthorizationGroups).group
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: &storedAdmissionAccounts{account: &current}, schedulerSnapshot: snapshot, httpUpstream: upstream}
+				svc.SetStoredResponseService(stored)
+				original := []byte(`{"model":"gpt-5.5","input":"hello"}`)
+				plan, err := NewStoredResponsePlan(StoredResponseOwner{1, 2, 3}, original)
+				require.NoError(t, err)
+				ctx := context.Background()
+				routes := &managedAccountAuthorizationRoutes{}
+				if change == "composite-route-changed" {
+					group.Platform = PlatformComposite
+					routes.routes = []CompositeModelRoute{{ID: 21, GroupID: 3, PublicModel: "gpt-5.5", MatchType: CompositeRouteMatchExact, TargetPlatform: PlatformOpenAI, UpstreamModel: "gpt-route", Endpoint: CompositeRouteEndpointResponses, Enabled: true}}
+					ctx = WithCompositeRouteDecision(ctx, CompositeRouteDecision{Matched: true, Source: CompositeRouteSourceExplicit, GroupID: 3, PublicModel: "gpt-5.5", TargetPlatform: PlatformOpenAI, UpstreamModel: "gpt-route", Endpoint: CompositeRouteEndpointResponses})
+					ctx = WithManagedFileRouteResolver(ctx, NewCompositeRouteResolver(routes))
+				}
+				calls := 0
+				ctx = WithBPSRequestReauthorize(ctx, func(context.Context, string) error {
+					calls++
+					if calls == changeAt {
+						switch change {
+						case "group-revoked":
+							group.Status = StatusDisabled
+						case "effective-mapping-changed":
+							current.Credentials["model_mapping"] = map[string]any{"gpt-5.5": "gpt-other", "gpt-route": "gpt-native"}
+						case "composite-route-changed":
+							routes.routes[0].UpstreamModel = "gpt-other"
+						}
+					}
+					return nil
+				})
+				ctx = WithStoredResponsePlan(ctx, plan)
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(original)).WithContext(ctx)
+				result, err := svc.Forward(ctx, c, &account, plan.Request.UpstreamBody)
+				require.Nil(t, result)
+				require.ErrorIs(t, err, ErrBPSRequestAuthorizationRevoked)
+				require.Equal(t, changeAt, calls)
+				require.Zero(t, upstream.inference)
+				if changeAt == 1 {
+					require.Zero(t, upstream.preflight)
+				} else {
+					require.Equal(t, 1, upstream.preflight)
+				}
+				if changeAt < 3 {
+					require.Zero(t, db.reservations)
+				} else {
+					require.Equal(t, 1, db.reservations)
+					require.NotNil(t, db.terminal)
+					require.Equal(t, "failed", db.terminal.State)
+				}
+			})
+		}
 	}
 }
