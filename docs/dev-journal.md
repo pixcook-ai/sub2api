@@ -212,3 +212,5 @@ URL历史诊断完整保留：1836额外请求因native夹具330MiB留存加200M
 - CI揭示WebP可达漏洞GO-2026-6222/5061/4961，官方vuln.go.dev确认x/image0.45.0统一修复，已最小升级（不tidy）。同时清理errcheck、等价静态规则与无调用遗留私有函数；私有文件root仅operator配置，保留no-follow/descriptor围栏并注明G703边界。最终修改后必须重验。
 
 - 最新源码e1c1c3c03安全扫描通过；最新完整门禁dry-run44743498402运行中。部署无生产写入，自有镜像尚未发布；定时同步专用token仍缺失。
+
+- 最终候选5cc87fa8b远端dry-run44757345587全部通过（unit/integration/race/lint/security/frontend/OCI）。本地完整integration19906pass/35skip，最终受影响1410pass/1skip。自动同步仍缺专用token；未发布镜像、未生产切换。详细记录见任务文档。
