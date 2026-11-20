@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,6 +132,7 @@ func TestManagedFilesIngressProtocolBoundaries(t *testing.T) {
 
 type managedIngressFileRepo struct {
 	service.FileRepository
+	mu               sync.Mutex
 	file             *service.StoredFile
 	opened, released int
 }
@@ -142,19 +144,30 @@ func (r *managedIngressFileRepo) GetForOwner(_ context.Context, user, group int6
 	copy := *r.file
 	return &copy, nil
 }
-func (r *managedIngressFileRepo) AcquireRead(ctx context.Context, user, group int64, id, token string, _ time.Duration) (*service.StoredFile, error) {
+func (r *managedIngressFileRepo) AcquireReadGrant(ctx context.Context, user, group int64, id, token string, lease, _ time.Duration) (*service.StoredFile, service.FileReadGrant, error) {
 	f, e := r.GetForOwner(ctx, user, group, id)
 	if e == nil {
+		r.mu.Lock()
 		r.opened++
+		r.mu.Unlock()
 	}
-	return f, e
+	now := time.Now()
+	return f, service.FileReadGrant{DBNow: now, Until: now.Add(lease)}, e
 }
 func (r *managedIngressFileRepo) ReleaseRead(context.Context, int64, string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.released++
 	return nil
 }
-func (r *managedIngressFileRepo) RenewRead(context.Context, int64, string, time.Duration) error {
-	return nil
+func (r *managedIngressFileRepo) RenewReadGrant(_ context.Context, _ int64, _ string, lease, _ time.Duration) (service.FileReadGrant, error) {
+	now := time.Now()
+	return service.FileReadGrant{DBNow: now, Until: now.Add(lease)}, nil
+}
+func (r *managedIngressFileRepo) readActivity() (opened, released int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.opened, r.released
 }
 
 type managedIngressBlob struct{ service.FileBlobStore }
@@ -199,21 +212,23 @@ func TestManagedFilesIngressPreparesOwnerAndClosesReadLease(t *testing.T) {
 			router.POST("/v1/responses", h.ManagedFilesIngress, func(c *gin.Context) {
 				dispatched = true
 				require.NotNil(t, service.ManagedFilePlanFromContext(c.Request.Context()))
-				require.Zero(t, repo.released, "lease must survive until forwarding ends")
+				_, released := repo.readActivity()
+				require.Zero(t, released, "lease must survive until forwarding ends")
 				c.Status(204)
 			})
 			body := `{"input":[{"role":"user","content":[{"type":"input_file","file_id":"file-private"}]}]}`
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+			opened, released := repo.readActivity()
 			if tc.status == 204 {
 				require.True(t, dispatched)
 				require.Equal(t, []service.FileOwner{{UserID: 3, APIKeyID: 2, GroupID: 4}}, ledger.owners)
-				require.Equal(t, 1, repo.opened)
-				require.Equal(t, 1, repo.released)
+				require.Equal(t, 1, opened)
+				require.Equal(t, 1, released)
 			} else {
 				require.False(t, dispatched)
-				require.Zero(t, repo.opened)
+				require.Zero(t, opened)
 				require.Empty(t, ledger.owners)
 			}
 		})

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 
 type managedResolverFileRepo struct {
 	FileRepository
+	mu               sync.Mutex
 	files            map[string]*StoredFile
 	opened, released []string
 }
@@ -30,19 +32,30 @@ func (r *managedResolverFileRepo) GetForOwner(_ context.Context, u, g int64, id 
 	copy := *f
 	return &copy, nil
 }
-func (r *managedResolverFileRepo) AcquireRead(ctx context.Context, u, g int64, id, token string, _ time.Duration) (*StoredFile, error) {
+func (r *managedResolverFileRepo) AcquireReadGrant(ctx context.Context, u, g int64, id, token string, lease, _ time.Duration) (*StoredFile, FileReadGrant, error) {
 	f, e := r.GetForOwner(ctx, u, g, id)
 	if e == nil {
+		r.mu.Lock()
 		r.opened = append(r.opened, id)
+		r.mu.Unlock()
 	}
-	return f, e
+	now := time.Now()
+	return f, FileReadGrant{DBNow: now, Until: now.Add(lease)}, e
 }
-func (r *managedResolverFileRepo) RenewRead(context.Context, int64, string, time.Duration) error {
-	return nil
+func (r *managedResolverFileRepo) RenewReadGrant(_ context.Context, _ int64, _ string, lease, _ time.Duration) (FileReadGrant, error) {
+	now := time.Now()
+	return FileReadGrant{DBNow: now, Until: now.Add(lease)}, nil
 }
 func (r *managedResolverFileRepo) ReleaseRead(_ context.Context, id int64, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.released = append(r.released, "released")
 	return nil
+}
+func (r *managedResolverFileRepo) readActivity() (opened, released []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.opened...), append([]string(nil), r.released...)
 }
 
 type managedResolverBlob struct{ FileBlobStore }
@@ -87,7 +100,8 @@ func TestManagedFileResolverChecksAllOwnersBeforeOpeningAnyFile(t *testing.T) {
 	plan, err := resolver.Prepare(context.Background(), FileOwner{UserID: 1, GroupID: 2, APIKeyID: 3}, body)
 	require.ErrorIs(t, err, ErrFileNotFound)
 	require.Nil(t, plan)
-	require.Empty(t, repo.opened)
+	opened, _ := repo.readActivity()
+	require.Empty(t, opened)
 	require.Zero(t, ledger.lookupCalls)
 }
 
@@ -198,7 +212,8 @@ func TestManagedFileResolverBindsUploadedFileAndRechecksBeforeGeneration(t *test
 	ledger.authorizeErr = nil
 	require.NoError(t, plan.Close())
 	require.Equal(t, 1, ledger.releases)
-	require.Len(t, repo.released, 1)
+	_, released := repo.readActivity()
+	require.Len(t, released, 1)
 }
 
 func TestManagedFileResolverUploadFailureStopsAndBecomesUncertain(t *testing.T) {
@@ -389,6 +404,7 @@ func TestManagedFileResolverRejectsRepeatedPositionBudgetBeforeOpening(t *testin
 		defer plan.Close()
 	}
 	require.Nil(t, plan)
-	require.Empty(t, repo.opened)
+	opened, _ := repo.readActivity()
+	require.Empty(t, opened)
 	require.Zero(t, ledger.lookupCalls)
 }
