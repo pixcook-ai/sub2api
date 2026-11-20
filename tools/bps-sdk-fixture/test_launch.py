@@ -104,7 +104,8 @@ class LauncherBoundaryTest(unittest.TestCase):
 
     def test_gateway_snapshot_keeps_wrapper_cases_and_both_sources_immutable(self):
         paths = ("scripts/sdk-conformance/fixture.py", "scripts/sdk-conformance/gateway_fixture.go.txt",
-                 "scripts/sdk-conformance/native_fixture.go.txt", "scripts/sdk-conformance/cases/sse.json")
+                 "scripts/sdk-conformance/native_fixture.go.txt", "scripts/sdk-conformance/cases/sse.json",
+                 "scripts/sdk-conformance/cases/tools.json")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository, run = root / "repository", root / "run"
@@ -124,6 +125,41 @@ class LauncherBoundaryTest(unittest.TestCase):
                 self.assertEqual(hashes[relative], hashlib.sha256(expected[relative]).hexdigest())
                 self.assertEqual((snapshot / relative).stat().st_mode & 0o777, 0o400)
             self.assertEqual(snapshot.stat().st_mode & 0o777, 0o700)
+
+    def test_owned_gateway_receives_both_immutable_case_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            main_repo, gateway_repo = root / "main", root / "gateway"
+            entrypoint = main_repo / "backend/cmd/server/main.go"
+            entrypoint.parent.mkdir(parents=True)
+            entrypoint.write_text("package main\n")
+            for relative in ("fixture.py", "gateway_fixture.go.txt", "native_fixture.go.txt",
+                             "cases/sse.json", "cases/tools.json"):
+                source = gateway_repo / "scripts/sdk-conformance" / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(relative)
+            args = SimpleNamespace(main_repo=str(main_repo), gateway_repo=str(gateway_repo),
+                                   out=str(root / "main.json"), keep_private_logs=False)
+            observed = []
+            def observe(argv, **_kwargs):
+                observed.append(argv)
+                snapshot = Path(argv[1]).parents[2]
+                self.assertNotEqual(snapshot, gateway_repo)
+                self.assertEqual(Path(argv[argv.index("--cases") + 1]),
+                                 snapshot / "scripts/sdk-conformance/cases/sse.json")
+                self.assertIn("--tool-cases", argv)
+                tool_cases = Path(argv[argv.index("--tool-cases") + 1])
+                self.assertEqual(tool_cases, snapshot / "scripts/sdk-conformance/cases/tools.json")
+                self.assertTrue(tool_cases.is_absolute())
+                self.assertEqual(tool_cases.read_text(), "cases/tools.json")
+                raise RuntimeError("observed gateway startup")
+            with patch.dict(LAUNCHER["launch"].__globals__, {
+                    "source_state": lambda _repo: {"commit": "fixture", "tracked_dirty": False, "source_dirty": False},
+                    "build_gateway_fixture": lambda _repo, run, _snapshot: run / "gateway-fixture"}), \
+                    patch.object(subprocess, "Popen", side_effect=observe):
+                with self.assertRaisesRegex(RuntimeError, "observed gateway startup"):
+                    LAUNCHER["launch"](args, None)
+            self.assertEqual(len(observed), 1)
 
     def test_seed_input_contains_observed_description_without_rewriting_gateway(self):
         wanted = self.description()

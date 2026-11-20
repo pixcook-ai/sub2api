@@ -281,7 +281,8 @@ def snapshot_gateway_sources(repository, data_dir):
     snapshot.mkdir(mode=0o700)
     hashes = {}
     for relative in ("scripts/sdk-conformance/fixture.py", "scripts/sdk-conformance/gateway_fixture.go.txt",
-                     "scripts/sdk-conformance/native_fixture.go.txt", "scripts/sdk-conformance/cases/sse.json"):
+                     "scripts/sdk-conformance/native_fixture.go.txt", "scripts/sdk-conformance/cases/sse.json",
+                     "scripts/sdk-conformance/cases/tools.json"):
         payload = (repository / relative).read_bytes()
         target = snapshot / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -352,8 +353,9 @@ def launch(args, gateway):
             gateway_snapshot, gateway_source_hashes = snapshot_gateway_sources(gateway_repository, data_dir)
             fixture_script = gateway_snapshot / "scripts/sdk-conformance/fixture.py"
             fixture_cases = gateway_snapshot / "scripts/sdk-conformance/cases/sse.json"
+            fixture_tool_cases = gateway_snapshot / "scripts/sdk-conformance/cases/tools.json"
             gateway_binary = build_gateway_fixture(gateway_repository, data_dir, gateway_snapshot)
-            gateway_process = subprocess.Popen([sys.executable, str(fixture_script), "--binary", str(gateway_binary), "--cases", str(fixture_cases), "--out", str(gateway_manifest)], stdout=gateway_log, stderr=subprocess.STDOUT, start_new_session=True, env=process_environment(data_dir))
+            gateway_process = subprocess.Popen([sys.executable, str(fixture_script), "--binary", str(gateway_binary), "--cases", str(fixture_cases), "--tool-cases", str(fixture_tool_cases), "--out", str(gateway_manifest)], stdout=gateway_log, stderr=subprocess.STDOUT, start_new_session=True, env=process_environment(data_dir))
             def gateway_ready():
                 if gateway_process.poll() is not None:
                     raise RuntimeError("owned gateway fixture exited; inspect private gateway.log")
