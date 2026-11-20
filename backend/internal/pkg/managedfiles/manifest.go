@@ -227,7 +227,12 @@ func manifestTemplate(m AdmitManifest) (map[string]any, error) {
 				continue
 			}
 			if part["type"] == "input_image" {
-				return nil, reject("unsupported_managed_input", fmt.Sprintf("request_template.input[%d].content[%d]", i, j))
+				for key := range part {
+					if strings.EqualFold(key, "file_id") {
+						return nil, reject("unsupported_managed_input", fmt.Sprintf("request_template.input[%d].content[%d]", i, j))
+					}
+				}
+				continue
 			}
 			if part["type"] != "input_file" {
 				continue

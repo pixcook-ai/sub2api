@@ -41,8 +41,8 @@ func TestManifestRejectsWrongAndUndeclaredFilePositions(t *testing.T) {
 		{"sha field", func(m *managedfiles.AdmitManifest) { m.Files[0].SHA256 = "bad" }, "invalid_managed_manifest", "files[0].sha256"},
 		{"unsafe name", func(m *managedfiles.AdmitManifest) { m.Files[0].Filename = "../private.txt" }, "invalid_managed_manifest", "files[0].filename"},
 		{"budget repeated per position", func(m *managedfiles.AdmitManifest) { m.Files[0].Bytes = 200 << 20; m.Files[1].Bytes = 200 << 20 }, "managed_file_budget", "files[1].positions"},
-		{"image mixed", func(m *managedfiles.AdmitManifest) {
-			m.RequestTemplate = []byte(strings.Replace(string(m.RequestTemplate), `{"type":"input_text","text":"Read both"}`, `{"type":"input_image","image_url":"https://example.invalid/image.png"}`, 1))
+		{"image file ID mixed", func(m *managedfiles.AdmitManifest) {
+			m.RequestTemplate = []byte(strings.Replace(string(m.RequestTemplate), `{"type":"input_text","text":"Read both"}`, `{"type":"input_image","file_id":"file-public-image"}`, 1))
 		}, "unsupported_managed_input", "request_template.input[0].content[0]"},
 		{"inline file mixed", func(m *managedfiles.AdmitManifest) {
 			m.RequestTemplate = []byte(strings.Replace(string(m.RequestTemplate), `{"type":"input_file","file_id":"file-public-b"}`, `{"type":"input_file","file_data":"aGVsbG8="}`, 1))
@@ -55,6 +55,51 @@ func TestManifestRejectsWrongAndUndeclaredFilePositions(t *testing.T) {
 			var typed *managedfiles.Error
 			if !errors.As(err, &typed) || typed.Code != tc.code || typed.Param != tc.param {
 				t.Fatalf("got %#v; want %s %s", err, tc.code, tc.param)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsImageFileIDsIncludingAmbiguousAliases(t *testing.T) {
+	for _, fields := range []string{
+		`"file_id":"file-public-image"`, `"file_id":null`, `"file_id":""`, `"file_id":17`,
+		`"FILE_ID":"file-public-image"`, `"File_Id":null`, `"file_ID":""`,
+		`"file_id":"file-public-image","FILE_ID":null`, `"\u0066ile_id":"file-public-image"`,
+	} {
+		t.Run(fields, func(t *testing.T) {
+			m := exampleManifest()
+			image := `{"type":"input_image","image_url":"https://example.invalid/image.png",` + fields + `}`
+			m.RequestTemplate = []byte(strings.Replace(string(m.RequestTemplate), `{"type":"input_text","text":"Read both"}`, image, 1))
+			for _, err := range []error{
+				managedfiles.ValidateManifest(m),
+				func() error {
+					_, err := managedfiles.ReplacedWire(m, map[string]string{"file-public-a": "file-remote-a", "file-public-b": "file-remote-b"})
+					return err
+				}(),
+			} {
+				var typed *managedfiles.Error
+				if !errors.As(err, &typed) || typed.Code != "unsupported_managed_input" || typed.Param != "request_template.input[0].content[0]" {
+					t.Fatalf("accepted ambiguous image ID or wrong rejection: %#v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestManifestStillRejectsTopLevelAndToolOutputImages(t *testing.T) {
+	for _, tc := range []struct {
+		name, old, replacement, param string
+	}{
+		{"top level", `{"type":"function_call","call_id":"c","name":"f","arguments":"{\"file_id\":\"file-public-a\"}"}`, `{"type":"function_call","call_id":"c","name":"f","arguments":"{\"file_id\":\"file-public-a\"}"},{"type":"input_image","image_url":"https://example.invalid/image.png"}`, "request_template.input[2]"},
+		{"function output", `{"type":"function_call","call_id":"c","name":"f","arguments":"{\"file_id\":\"file-public-a\"}"}`, `{"type":"function_call_output","call_id":"c","output":[{"type":"input_image","image_url":"https://example.invalid/image.png"}]}`, "request_template.input[1].output[0]"},
+		{"custom output", `{"type":"function_call","call_id":"c","name":"f","arguments":"{\"file_id\":\"file-public-a\"}"}`, `{"type":"custom_tool_call_output","call_id":"c","output":[{"type":"input_image","image_url":"https://example.invalid/image.png"}]}`, "request_template.input[1].output[0]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := exampleManifest()
+			m.RequestTemplate = []byte(strings.Replace(string(m.RequestTemplate), tc.old, tc.replacement, 1))
+			var typed *managedfiles.Error
+			if err := managedfiles.ValidateManifest(m); !errors.As(err, &typed) || typed.Code != "unsupported_managed_input" || typed.Param != tc.param {
+				t.Fatalf("changed image location boundary: %#v", err)
 			}
 		})
 	}
@@ -117,6 +162,32 @@ func TestReplacedWireOnlyChangesDeclaredFilePositions(t *testing.T) {
 	}
 	if !strings.Contains(string(m.RequestTemplate), `"file_id":"file-public-a"`) {
 		t.Fatal("mutated caller template")
+	}
+}
+
+func TestReplacedWirePreservesOpaqueImagesArgumentsAndSidecars(t *testing.T) {
+	m := exampleManifest()
+	m.RequestTemplate = json.RawMessage(`{"model":"fixture","metadata":{"n":9007199254740993,"screenshot":{"type":"input_image","file_id":"file-public-a"},"sidecar":{"type":"input_file","file_id":"file-public-b","label":"原样🧪","n":18446744073709551615}},"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/截图.png?opaque=file-public-a","detail":"high","sidecar":{"file_id":"file-public-b","n":9007199254740993,"label":"保留雪"}},{"type":"input_file","file_id":"file-public-a"},{"type":"input_image","image_url":"data:image/png;base64,opaque-file-public-b","sidecar":{"type":"input_file","file_id":"file-public-a"}},{"type":"input_file","file_id":"file-public-b"},{"type":"input_file","file_id":"file-public-a"}]},{"type":"function_call","call_id":"c","name":"f","arguments":"{\"screenshot\":{\"type\":\"input_image\",\"file_id\":\"file-public-a\"},\"n\":9007199254740993,\"label\":\"参数雪\"}"}]}`)
+	m.Files[0].Positions = []managedfiles.Position{{Input: 0, Part: 1}, {Input: 0, Part: 4}}
+	m.Files[1].Positions = []managedfiles.Position{{Input: 0, Part: 3}}
+	original := string(m.RequestTemplate)
+	got, err := managedfiles.ReplacedWire(m, map[string]string{"file-public-a": "file-remote-a", "file-public-b": "file-remote-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"model":"fixture","metadata":{"n":9007199254740993,"screenshot":{"type":"input_image","file_id":"file-public-a"},"sidecar":{"type":"input_file","file_id":"file-public-b","label":"原样🧪","n":18446744073709551615}},"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/截图.png?opaque=file-public-a","detail":"high","sidecar":{"file_id":"file-public-b","n":9007199254740993,"label":"保留雪"}},{"type":"input_file","file_id":"file-remote-a"},{"type":"input_image","image_url":"data:image/png;base64,opaque-file-public-b","sidecar":{"type":"input_file","file_id":"file-public-a"}},{"type":"input_file","file_id":"file-remote-b"},{"type":"input_file","file_id":"file-remote-a"}]},{"type":"function_call","call_id":"c","name":"f","arguments":"{\"screenshot\":{\"type\":\"input_image\",\"file_id\":\"file-public-a\"},\"n\":9007199254740993,\"label\":\"参数雪\"}"}]}`
+	canonical, err := managedfiles.Canonical([]byte(want))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(canonical) {
+		t.Fatalf("opaque wire changed\ngot %s\nwant %s", got, canonical)
+	}
+	if string(m.RequestTemplate) != original {
+		t.Fatal("mutated caller template")
+	}
+	if m.Files[0].Positions[1].Part != 4 || m.Files[1].Positions[0].Part != 3 {
+		t.Fatal("mutated declared positions")
 	}
 }
 
