@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"strconv"
 
@@ -107,7 +108,8 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	defer stop()
 	f, err := h.files.UploadMultipartWithHooks(uploadCtx, owner, reader, service.FileUploadHooks{InterruptRead: cancel, Reauthorize: middleware.FileUploadReauthorize(c)})
 	if err != nil {
-		if errors.Is(uploadCtx.Err(), context.DeadlineExceeded) {
+		var timeoutErr net.Error
+		if errors.Is(uploadCtx.Err(), context.DeadlineExceeded) || errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
 			err = service.ErrFileUploadDeadline
 		}
 		handleFileError(c, err)
