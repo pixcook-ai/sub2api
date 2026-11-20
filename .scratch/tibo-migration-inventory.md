@@ -2,7 +2,7 @@
 
 Source: /Users/leo/Projects/pixcook-ai/sub2api-czc
 Target worktree: /Users/leo/Projects/pixcook-ai/.worktrees/sub2api-tibo-20261120
-Baseline: 28842f406469c0b51a9737d085935ee3fb978b70
+Initial baseline: 28842f406469c0b51a9737d085935ee3fb978b70. Final review baseline: 09def4827, merged to retain the base repository's committed Files/Responses authorization lifecycle.
 
 | Area | Required touchpoints | Integration check |
 | --- | --- | --- |
@@ -27,4 +27,4 @@ Source auto-grouping uses each fresh definitive raw sample, while confirmed rout
 
 ## Usage observation slice
 
-Implemented code and inherited behavior tests; Go-cache pause has been lifted; the main agent coordinates the single heavy build slot, so this slice has not run Go tests yet. Main agent owns final integration and verification. Ordinary user responses never receive route_degraded; administrator list/statistics accept optional route_degraded=true|false, where each explicit value excludes SQL NULL rows.
+Implemented code and inherited behavior tests; Go-cache pause has been lifted. Ent and Wire were actually regenerated. Main agent coordinates the single heavy build slot and owns final integration and verification. Ordinary user responses never receive route_degraded; administrator list/statistics accept optional route_degraded=true|false, where each explicit value excludes SQL NULL rows. The real PostgreSQL round-trip/filter/partial-index case passed in the isolated migration harness.
