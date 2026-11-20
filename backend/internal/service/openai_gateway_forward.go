@@ -450,6 +450,12 @@ func (s *OpenAIGatewayService) Forward(
 
 	isCompactRequest := compactPath
 	requestedModel := reqModel
+	managedAuthorizationModel := requestedModel
+	if public, ok := RequestedPublicModelFromContext(ctx); ok {
+		managedAuthorizationModel = public
+	} else if public, ok := ctx.Value(ctxkey.Model).(string); ok && public != "" {
+		managedAuthorizationModel = public
+	}
 	billingModel, upstreamModel := resolveOpenAIForwardMappedModels(account, requestedModel, isCompactRequest)
 	if isCompactRequest {
 		if compactModel := s.resolveOpenAICompactFallbackModel(account, requestedModel); compactModel != "" {
@@ -1108,25 +1114,13 @@ func (s *OpenAIGatewayService) Forward(
 	}
 
 	if managedPlan != nil {
-		selectedConfig, configErr := BPSFilesConfigForAccount(account)
-		if configErr != nil {
-			return nil, &ManagedFilePreparationError{ErrManagedFileNotReady}
-		}
 		managedGroupID := managedPlan.owner.GroupID
-		managedAPIKey, managedBaseURL := account.GetCredential("api_key"), account.GetCredential("base_url")
 		ctx = withManagedFilePreparationAuthorization(ctx, func(checkCtx context.Context) error {
-			if err := CheckBPSRequestAuthorization(checkCtx, requestedModel); err != nil {
+			if err := CheckBPSRequestAuthorization(checkCtx, managedAuthorizationModel); err != nil {
 				return err
 			}
-			current, checkErr := s.RecheckManagedFileAccount(checkCtx, &managedGroupID, account.ID, requestedModel)
-			if checkErr != nil {
-				return ErrManagedFileNotReady
-			}
-			currentConfig, checkErr := BPSFilesConfigForAccount(current)
-			if checkErr != nil || currentConfig != selectedConfig || current.GetCredential("api_key") != managedAPIKey || current.GetCredential("base_url") != managedBaseURL {
-				return ErrManagedFileNotReady
-			}
-			return nil
+			_, err := s.AuthorizeManagedFileAccount(checkCtx, managedGroupID, managedAuthorizationModel, account)
+			return err
 		})
 		resolved, resolveErr := s.managedFiles.Resolve(ctx, managedPlan, account, body)
 		if resolveErr != nil {

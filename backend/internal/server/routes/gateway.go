@@ -563,6 +563,7 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 		resolver = service.NewCompositeRouteResolver(nil)
 	}
 	return func(c *gin.Context) {
+		c.Request = c.Request.WithContext(service.WithManagedFileRouteResolver(c.Request.Context(), resolver))
 		apiKey, ok := middleware.GetAPIKeyFromContext(c)
 		if !ok || apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
 			c.Next()
