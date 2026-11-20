@@ -72,3 +72,21 @@ jobs:
       - run: python -m unittest discover -s .github/upstream-sync-tools -p 'test_*.py'
       - run: python -m unittest discover -s deploy/pixcook -p test_deployment.py
       - run: bash -n .github/release-tools/release-images.sh
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Scan reachable backend vulnerabilities
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
