@@ -209,6 +209,11 @@ func newCodexWireEntryWithUsage(t *testing.T, accounts []service.Account, usage 
 
 func newCodexWireEntryWithConfig(t *testing.T, accounts []service.Account, usage service.UsageLogRepository, configure func(*config.Config), schedulerSlots bool, repos ...service.AccountRepository) (*codexWireUpstream, *gin.Engine, func()) {
 	t.Helper()
+	return newCodexWireEntryWithSnapshot(t, accounts, usage, configure, schedulerSlots, nil, repos...)
+}
+
+func newCodexWireEntryWithSnapshot(t *testing.T, accounts []service.Account, usage service.UsageLogRepository, configure func(*config.Config), schedulerSlots bool, snapshot *service.SchedulerSnapshotService, repos ...service.AccountRepository) (*codexWireUpstream, *gin.Engine, func()) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	groupID := int64(9001)
 	var repo service.AccountRepository = &grokCredentialHandlerRepo{accounts: accounts, missingOnGet: map[int64]bool{}}
@@ -235,7 +240,7 @@ func newCodexWireEntryWithConfig(t *testing.T, accounts []service.Account, usage
 	// openAITokenProvider 传 nil：GetAccessToken 会降级直接读 credentials.access_token，
 	// 省掉一整套 OAuth 刷新 mock。
 	gateway := service.NewOpenAIGatewayService(
-		repo, usage, nil, nil, nil, nil, nil, cfg, nil, schedulerConcurrency,
+		repo, usage, nil, nil, nil, nil, nil, cfg, snapshot, schedulerConcurrency,
 		service.NewBillingService(cfg, nil), nil, billingCache, upstream,
 		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)

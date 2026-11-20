@@ -39,7 +39,21 @@ func (r *storedResponseDispatchRepo) ListModelAvailabilityCandidates(context.Con
 // also supplies the explicit model authorization port required by local storage.
 func newStoredResponsesDispatchEntryWithConfig(t *testing.T, accounts []service.Account, usage service.UsageLogRepository, configure func(*config.Config), schedulerSlots bool, repos ...service.AccountRepository) (*codexWireUpstream, *gin.Engine, func()) {
 	t.Helper()
-	upstream, inner, cleanup := newCodexWireEntryWithConfig(t, accounts, usage, configure, schedulerSlots, repos...)
+	return newStoredResponsesDispatchEntry(t, accounts, usage, configure, schedulerSlots, false, repos...)
+}
+
+func newStoredResponsesDispatchEntry(t *testing.T, accounts []service.Account, usage service.UsageLogRepository, configure func(*config.Config), schedulerSlots, authorize bool, repos ...service.AccountRepository) (*codexWireUpstream, *gin.Engine, func()) {
+	t.Helper()
+	var accountRepo service.AccountRepository = &grokCredentialHandlerRepo{accounts: accounts, missingOnGet: map[int64]bool{}}
+	if len(repos) > 0 {
+		accountRepo = repos[0]
+	}
+	groups := &groupMapRepo{groups: map[int64]*service.Group{9001: {ID: 9001, Platform: service.PlatformOpenAI, Status: service.StatusActive, Hydrated: true}}}
+	var snapshot *service.SchedulerSnapshotService
+	if authorize {
+		snapshot = service.NewSchedulerSnapshotService(nil, nil, accountRepo, groups, nil)
+	}
+	upstream, inner, cleanup := newCodexWireEntryWithSnapshot(t, accounts, usage, configure, schedulerSlots, snapshot, accountRepo)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		ctx := service.WithBPSRequestReauthorize(c.Request.Context(), func(check context.Context, requestedModel string) error {
@@ -208,7 +222,7 @@ func TestStoredResponsesHTTPFinalizeFailureWritesOneSafeTerminal(t *testing.T) {
 		t.Run(fmt.Sprint(stream), func(t *testing.T) {
 			accounts := []service.Account{storedResponseDispatchAccount(14101, true)}
 			repo := &storedResponseDispatchRepo{grokCredentialHandlerRepo: &grokCredentialHandlerRepo{accounts: accounts, missingOnGet: map[int64]bool{}}}
-			upstream, router, cleanup := newStoredResponsesDispatchEntryWithConfig(t, accounts, nil, func(c *config.Config) { c.Gateway.StoredResponses.Enabled = true }, false, repo)
+			upstream, router, cleanup := newStoredResponsesDispatchEntry(t, accounts, nil, func(c *config.Config) { c.Gateway.StoredResponses.Enabled = true }, false, true, repo)
 			defer cleanup()
 			storeRepo := &storedDispatchFinalizeRepository{}
 			storedConfig := service.DefaultStoredResponseConfig()
@@ -262,7 +276,7 @@ func TestStoredResponsesHTTPFinalizeFailureWritesOneSafeTerminal(t *testing.T) {
 func TestStoredResponsesHTTPPreflightPolicyKeepsSafePublicError(t *testing.T) {
 	accounts := []service.Account{storedResponseDispatchAccount(14101, true)}
 	repo := &storedResponseDispatchRepo{grokCredentialHandlerRepo: &grokCredentialHandlerRepo{accounts: accounts, missingOnGet: map[int64]bool{}}}
-	upstream, router, cleanup := newStoredResponsesDispatchEntryWithConfig(t, accounts, nil, func(c *config.Config) { c.Gateway.StoredResponses.Enabled = true }, false, repo)
+	upstream, router, cleanup := newStoredResponsesDispatchEntry(t, accounts, nil, func(c *config.Config) { c.Gateway.StoredResponses.Enabled = true }, false, true, repo)
 	defer cleanup()
 	storeRepo := &storedDispatchFinalizeRepository{}
 	storedConfig := service.DefaultStoredResponseConfig()
