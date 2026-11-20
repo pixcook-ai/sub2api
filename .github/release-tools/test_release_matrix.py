@@ -31,6 +31,8 @@ class ReleaseMatrixTest(unittest.TestCase):
             shutil.copyfile(ROOT / name, name)
         Path('backend/cmd/server').mkdir(parents=True)
         release.VERSION_FILE.write_text('9.8.7\n')
+        Path('.github').mkdir()
+        Path('.github/upstream-baseline.json').write_text(json.dumps({'repository': 'KlN-4096/sub2api', 'tag': 'v9.8.7-klno.1', 'sha': 'b' * 40}))
 
     def fixture_artifacts(self, simple=False):
         directory = Path('release-input')
@@ -67,6 +69,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertEqual(leaf['archives'], original['archives'])
         self.assertEqual(leaf['release'], original['release'])
         self.assertFalse(leaf['dockers'])
+        self.assertEqual(leaf['before']['hooks'], [])
         self.assertIn('{{ .Env.RELEASE_DATE }}', '\n'.join(leaf['builds'][0]['ldflags']))
 
     def test_publication_config_has_no_compilation_or_docker_work(self):
@@ -126,13 +129,39 @@ class ReleaseMatrixTest(unittest.TestCase):
         with patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
             with self.assertRaisesRegex(ValueError, 'version tag'):
                 release.plan(args)
-        args.ref = 'v9.8.7'
+        args.ref = 'v9.8.7-pixcook.1'
         with patch.object(subprocess, 'check_output', side_effect=['a' * 40 + '\n', 'b' * 40 + '\n']):
             with self.assertRaisesRegex(ValueError, 'does not match'):
                 release.plan(args)
 
+    def test_publication_requires_pixcook_tag_and_records_upstream(self):
+        for ref in ('v9.8.7', 'v9.8.7-klno.1'):
+            with self.subTest(ref=ref), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
+                with self.assertRaisesRegex(ValueError, 'pixcook'):
+                    release.plan(argparse.Namespace(ref=ref, dry_run=False, simple=True))
+        with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs', 'GITHUB_REPOSITORY_OWNER': 'ExampleOwner'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'), patch.object(subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            release.plan(argparse.Namespace(ref='v9.8.7-pixcook.1', dry_run=False, simple=True))
+        output = dict(line.split('=', 1) for line in Path('outputs').read_text().splitlines())
+        self.assertEqual(output['upstream_sha'], 'b' * 40)
+        self.assertEqual(output['upstream_tag'], 'v9.8.7-klno.1')
+        self.assertEqual(output['image'], 'ghcr.io/exampleowner/sub2api')
+        provenance = json.loads(Path('release-source.json').read_text())
+        self.assertEqual(provenance['source_sha'], 'a' * 40)
+        self.assertEqual(provenance['upstream']['sha'], 'b' * 40)
+
+    def test_invalid_or_unmerged_upstream_is_rejected(self):
+        with patch.object(subprocess, 'run') as run:
+            run.return_value.returncode = 1
+            with self.assertRaisesRegex(ValueError, 'ancestor'):
+                release.upstream_provenance('a' * 40)
+        Path('.github/upstream-baseline.json').write_text(json.dumps({'repository': 'other/repo', 'tag': 'v1.0.0', 'sha': 'b' * 40}))
+        with self.assertRaisesRegex(ValueError, 'upstream baseline'):
+            release.upstream_provenance('a' * 40)
+
     def test_dry_run_plan_resolves_matrix_without_a_new_tag(self):
-        with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs', 'GITHUB_REPOSITORY_OWNER': 'ExampleOwner'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
+        with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs', 'GITHUB_REPOSITORY_OWNER': 'ExampleOwner'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'), patch.object(subprocess, 'run') as run:
+            run.return_value.returncode = 0
             release.plan(argparse.Namespace(ref='feature/matrix', dry_run=True, simple=False))
         output = dict(line.split('=', 1) for line in Path('outputs').read_text().splitlines())
         self.assertEqual(output['dry_run'], 'true')
@@ -143,7 +172,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         fake_bin = Path('bin')
         fake_bin.mkdir()
         docker = fake_bin / 'docker'
-        docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n')
+        docker.write_text('#!/bin/sh\nif [ "$3" = inspect ] && [ "$5" != --format ]; then echo "manifest unknown" >&2; exit 1; fi\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n')
         docker.chmod(0o755)
         env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
                'DOCKER_LOG': str(Path('docker.log').resolve()), 'RUNNER_TEMP': self.temp.name,
@@ -163,7 +192,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         fake_bin = Path('bin')
         fake_bin.mkdir()
         docker = fake_bin / 'docker'
-        docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n')
+        docker.write_text('#!/bin/sh\nif [ "$3" = inspect ] && [ "$5" != --format ]; then echo "manifest unknown" >&2; exit 1; fi\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n')
         docker.chmod(0o755)
         for simple in (False, True):
             with self.subTest(simple=simple):
@@ -171,19 +200,43 @@ class ReleaseMatrixTest(unittest.TestCase):
                 env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
                        'DOCKER_LOG': str(log_path), 'RUNNER_TEMP': self.temp.name,
                        'RELEASE_VERSION': '9.8.7', 'RELEASE_SHA': 'a' * 40, 'GITHUB_REPOSITORY': 'ExampleOwner/sub2api',
-                       'DRY_RUN': 'false', 'SIMPLE_RELEASE': str(simple).lower(), 'DOCKERHUB_USERNAME': 'fixturehub'}
+                       'DRY_RUN': 'false', 'SIMPLE_RELEASE': str(simple).lower(), 'DOCKERHUB_USERNAME': 'fixturehub',
+                       'RELEASE_UPSTREAM_REPOSITORY': 'KlN-4096/sub2api', 'RELEASE_UPSTREAM_TAG': 'v9.8.7-klno.1',
+                       'RELEASE_UPSTREAM_SHA': 'b' * 40}
                 subprocess.run(['bash', str(ROOT / '.github/release-tools/release-images.sh')], env=env, check=True)
                 log = log_path.read_text()
                 self.assertIn('--push', log)
+                self.assertIn('io.pixcook.upstream.revision=' + 'b' * 40, log)
                 self.assertEqual(log.count('buildx build'), 1 if simple else 2)
                 if simple:
                     self.assertNotIn('fixturehub', log)
-                    self.assertNotIn('imagetools', log)
-                    self.assertIn('ghcr.io/exampleowner/sub2api:latest', log)
+                    self.assertNotIn('imagetools create', log)
+                    self.assertNotIn(':latest', log)
+                    self.assertIn('ghcr.io/exampleowner/sub2api:sha-' + 'a' * 40, log)
                 else:
                     self.assertEqual(log.count('imagetools create'), 2)
-                    self.assertIn('fixturehub/sub2api:9.8', log)
-                    self.assertIn('ghcr.io/exampleowner/sub2api:9', log)
+                    self.assertNotIn(':latest', log)
+                    self.assertIn('ghcr.io/exampleowner/sub2api:sha-' + 'a' * 40, log)
+                    self.assertNotIn('fixturehub/sub2api:9.8 ', log)
+
+    def test_existing_or_unverifiable_tags_never_publish(self):
+        fake_bin = Path('bin')
+        fake_bin.mkdir()
+        docker = fake_bin / 'docker'
+        for mode in ('exists', 'unauthorized'):
+            docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\nif [ "$PREFLIGHT" = exists ]; then exit 0; fi\necho unauthorized >&2\nexit 1\n')
+            docker.chmod(0o755)
+            log_path = Path(mode + '.log').resolve()
+            env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
+                   'DOCKER_LOG': str(log_path), 'PREFLIGHT': mode, 'RUNNER_TEMP': self.temp.name,
+                   'RELEASE_VERSION': '9.8.7-pixcook.1', 'RELEASE_SHA': 'a' * 40, 'GITHUB_REPOSITORY': 'ExampleOwner/sub2api',
+                   'DRY_RUN': 'false', 'SIMPLE_RELEASE': 'true', 'DOCKERHUB_USERNAME': 'skip',
+                   'RELEASE_UPSTREAM_REPOSITORY': 'KlN-4096/sub2api', 'RELEASE_UPSTREAM_TAG': 'v9.8.7-klno.1',
+                   'RELEASE_UPSTREAM_SHA': 'b' * 40}
+            result = subprocess.run(['bash', str(ROOT / '.github/release-tools/release-images.sh')], env=env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn('buildx build', log_path.read_text())
+
 
 
 

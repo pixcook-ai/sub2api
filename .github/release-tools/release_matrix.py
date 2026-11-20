@@ -18,6 +18,8 @@ FULL_CONFIG = Path('.goreleaser.yaml')
 SIMPLE_CONFIG = Path('.goreleaser.simple.yaml')
 VERSION_FILE = Path('backend/cmd/server/VERSION')
 VERSION_RE = re.compile(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?')
+PIXCOOK_TAG_RE = re.compile(r'v\d+\.\d+\.\d+-pixcook\.[1-9]\d*')
+SHA_RE = re.compile(r'[0-9a-f]{40}')
 
 
 def config(simple=False):
@@ -50,6 +52,17 @@ def sha256(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def upstream_provenance(source_sha):
+    data = json.loads(Path('.github/upstream-baseline.json').read_text())
+    if (set(data) != {'repository', 'tag', 'sha'} or data['repository'] != 'KlN-4096/sub2api'
+            or not re.fullmatch(r'v?\d+\.\d+\.\d+(?:-klno\.\d+)?', data['tag'])
+            or not SHA_RE.fullmatch(data['sha'])):
+        raise ValueError('invalid upstream baseline')
+    if subprocess.run(['git', 'merge-base', '--is-ancestor', data['sha'], source_sha], check=False).returncode:
+        raise ValueError('upstream baseline must be an ancestor of the selected source')
+    return data
+
+
 def plan(args):
     sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     if args.dry_run:
@@ -58,16 +71,21 @@ def plan(args):
     else:
         tag = args.ref
         version = tag.removeprefix('v')
-        if not tag.startswith('v') or not VERSION_RE.fullmatch(version):
-            raise ValueError('publishing requires a v-prefixed release version tag')
+        if not PIXCOOK_TAG_RE.fullmatch(tag):
+            raise ValueError('publishing requires a v-prefixed pixcook version tag')
         tagged_sha = subprocess.check_output(['git', 'rev-parse', '--verify', f'refs/tags/{tag}^{{commit}}'], text=True).strip()
         if sha != tagged_sha:
             raise ValueError('checkout does not match the selected release tag')
     if not VERSION_RE.fullmatch(version):
         raise ValueError('invalid VERSION')
+    upstream = upstream_provenance(sha)
+    owner = os.environ.get('GITHUB_REPOSITORY_OWNER', '').lower()
+    image = 'ghcr.io/' + owner + '/sub2api'
     VERSION_FILE.write_text(version + '\n')
+    Path('release-source.json').write_text(json.dumps({'source_sha': sha, 'version': version, 'tag': tag, 'image': image, 'upstream': upstream}, indent=2) + '\n')
     result = {'sha': sha, 'tag': tag, 'version': version,
-              'owner_lower': os.environ.get('GITHUB_REPOSITORY_OWNER', '').lower(),
+              'owner_lower': owner, 'image': image,
+              'upstream_repository': upstream['repository'], 'upstream_tag': upstream['tag'], 'upstream_sha': upstream['sha'],
               'simple': str(args.simple).lower(), 'dry_run': str(args.dry_run).lower(),
               'date': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
               'matrix': json.dumps({'include': targets(args.simple)}, separators=(',', ':'))}
@@ -81,6 +99,8 @@ def generate_config(args):
     data['snapshot'] = {'version_template': '{{ .Env.RELEASE_VERSION }}'}
     data['dockers'] = []
     data['docker_manifests'] = []
+    # Release builds consume the locked dependency graph; never tidy selected source.
+    data['before'] = {'hooks': []}
     if args.mode == 'build':
         target = {'goos': args.goos, 'goarch': args.goarch}
         if target not in targets():
@@ -95,7 +115,8 @@ def generate_config(args):
         data['before'] = {'hooks': []}
         data['builds'] = [{'id': 'sub2api', 'skip': True}]
         data['archives'] = []
-        extra = [{'glob': 'release-input/sub2api_*.tar.gz'}, {'glob': 'release-input/sub2api_*.zip'}]
+        extra = [{'glob': 'release-input/sub2api_*.tar.gz'}, {'glob': 'release-input/sub2api_*.zip'},
+                 {'glob': 'release-metadata/release-source.json'}]
         if args.simple:
             data['checksum'] = {'disable': True}
         else:
