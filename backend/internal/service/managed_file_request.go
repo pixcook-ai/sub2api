@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -17,84 +18,56 @@ type ManagedFileReference struct {
 	Positions []managedfiles.Position
 }
 
-// CollectManagedResponseFiles reads only typed Responses content. Tool
-// arguments and custom input strings remain opaque, even when they contain IDs.
-func CollectManagedResponseFiles(body []byte) ([]ManagedFileReference, error) {
-	if candidate, alias := managedResponseFileCandidate(body); candidate {
-		if alias {
-			return nil, ErrManagedFileUnsupportedInput
-		}
-		if _, err := managedfiles.Parse(body); err != nil {
-			return nil, ErrManagedFileUnsupportedInput
+func managedPublicReferences(files []ManagedInlineFileDescriptor) []ManagedFileReference {
+	byID := make(map[string][]managedfiles.Position)
+	for _, file := range files {
+		if file.PublicID != "" {
+			byID[file.PublicID] = append(byID[file.PublicID], file.Position)
 		}
 	}
-	refs := make(map[string][]managedfiles.Position)
-	unsupported := false
-	hasFile := false
-	input := gjson.GetBytes(body, "input")
-	if input.IsObject() {
-		for _, part := range input.Get("content").Array() {
-			if part.Get("type").String() == "input_file" || (part.Get("type").String() == "input_image" && part.Get("file_id").Exists()) {
-				return nil, ErrManagedFileUnsupportedInput
-			}
-		}
-	}
-	for i, item := range input.Array() {
-		kind := item.Get("type").String()
-		if kind == "input_file" || (kind == "input_image" && item.Get("file_id").Exists()) {
-			return nil, ErrManagedFileUnsupportedInput
-		}
-		if kind == "function_call_output" || kind == "custom_tool_call_output" {
-			for _, part := range item.Get("output").Array() {
-				if found, _ := managedFilePartCandidate(part, 0); found {
-					return nil, ErrManagedFileUnsupportedInput
-				}
-			}
-			continue
-		}
-		if kind != "message" && !(kind == "" && item.Get("role").Type == gjson.String) {
-			continue
-		}
-		for j, part := range item.Get("content").Array() {
-			switch part.Get("type").String() {
-			case "input_image":
-				if part.Get("file_id").Exists() {
-					return nil, ErrManagedFileUnsupportedInput
-				}
-			case "input_file":
-				id := part.Get("file_id")
-				if id.Exists() {
-					hasFile = true
-					if id.Type != gjson.String || !managedfiles.ValidRemoteID(id.String()) {
-						return nil, fmt.Errorf("%w: invalid file reference", ErrManagedFileUnsupportedInput)
-					}
-					refs[id.String()] = append(refs[id.String()], managedfiles.Position{Input: i, Part: j})
-				}
-				if part.Get("file_data").Exists() || part.Get("file_url").Exists() {
-					unsupported = true
-				}
-			}
-		}
-	}
-	if !hasFile {
-		return nil, nil
-	}
-	if unsupported {
-		return nil, ErrManagedFileUnsupportedInput
-	}
-	if _, err := managedfiles.Parse(body); err != nil {
-		return nil, fmt.Errorf("%w: invalid managed JSON", ErrManagedFileUnsupportedInput)
-	}
-	ids := make([]string, 0, len(refs))
-	for id := range refs {
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	result := make([]ManagedFileReference, 0, len(ids))
+	refs := make([]ManagedFileReference, 0, len(ids))
 	for _, id := range ids {
-		result = append(result, ManagedFileReference{PublicID: id, Positions: refs[id]})
+		refs = append(refs, ManagedFileReference{PublicID: id, Positions: byID[id]})
 	}
-	return result, nil
+	return refs
+}
+
+// CollectManagedResponseFiles reads only typed Responses content. Tool
+// arguments and custom input strings remain opaque, even when they contain IDs.
+func CollectManagedResponseFiles(body []byte) ([]ManagedFileReference, error) {
+	if !HasManagedResponseFiles(body) {
+		return nil, nil
+	}
+	plan, err := PreflightManagedInlineFiles(context.Background(), body, DefaultManagedInlineLimits())
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid managed files", ErrManagedFileUnsupportedInput)
+	}
+	return managedPublicReferences(plan.Files()), nil
+}
+
+// HasManagedResponseFiles only discovers protocol-owned candidates; it never
+// decodes payloads or interprets opaque arguments and user text.
+func HasManagedResponseFiles(body []byte) bool {
+	found, _ := managedResponseFileCandidate(body)
+	return found
+}
+
+// Attachments cannot be retained as Responses history until their replay
+// contract exists. Check original caller intent before compatibility rewrites.
+func managedResponseStorageUnsupported(body []byte) bool {
+	unsupported := false
+	gjson.ParseBytes(body).ForEach(func(key, value gjson.Result) bool {
+		if strings.EqualFold(key.String(), "store") {
+			unsupported = key.String() != "store" || (value.Type != gjson.False && value.Type != gjson.Null)
+		}
+		return !unsupported
+	})
+	return unsupported
 }
 
 // Walk only protocol-owned input/content/output containers, including duplicate
@@ -143,12 +116,13 @@ func managedFilePartCandidate(part gjson.Result, depth int) (found, alias bool) 
 	if depth > 64 {
 		return true, true
 	}
-	fileKind, toolResult, hasID := false, false, false
+	fileKind, imageKind, typed, hasID := false, false, false, false
 	part.ForEach(func(k, v gjson.Result) bool {
 		switch {
 		case strings.EqualFold(k.String(), "type"):
-			fileKind = fileKind || v.String() == "input_file" || v.String() == "input_image"
-			toolResult = toolResult || v.String() == "tool_result"
+			typed = true
+			fileKind = fileKind || strings.EqualFold(v.String(), "input_file")
+			imageKind = imageKind || strings.EqualFold(v.String(), "input_image")
 			alias = alias || k.String() != "type"
 		case strings.EqualFold(k.String(), "file_id"):
 			hasID = true
@@ -156,13 +130,13 @@ func managedFilePartCandidate(part gjson.Result, depth int) (found, alias bool) 
 		}
 		return true
 	})
-	if fileKind && hasID {
+	if fileKind || imageKind && hasID {
 		return true, alias
 	}
-	if toolResult {
+	if typed {
 		part.ForEach(func(k, v gjson.Result) bool {
-			if strings.EqualFold(k.String(), "content") {
-				alias = alias || k.String() != "content"
+			if strings.EqualFold(k.String(), "content") || strings.EqualFold(k.String(), "output") {
+				alias = alias || (k.String() != "content" && k.String() != "output")
 				v.ForEach(func(_, child gjson.Result) bool {
 					childFound, childAlias := managedFilePartCandidate(child, depth+1)
 					found, alias = found || childFound, alias || childAlias

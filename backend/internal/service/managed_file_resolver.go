@@ -44,6 +44,12 @@ type ManagedFilePlan struct {
 	owner             FileOwner
 	refs              []ManagedFileReference
 	files             []*StoredFile
+	preparation       *ManagedInlinePreparation
+	staging           *ManagedInlineStaging
+	inlineRefs        map[managedfiles.Position]string
+	requestID         string
+	inlineReservation *ManagedInlineReservation
+	inlineLedger      ManagedInlineOperationRepository
 	readers           map[string]io.ReadCloser
 	resolver          *ManagedFileResolver
 	reservation       *ManagedFileReservation
@@ -70,20 +76,30 @@ func (p *ManagedFilePlan) Close() error {
 			defer cancel()
 			p.closeErr = errors.Join(p.closeErr, p.resolver.ledger.ReleaseReservation(ctx, p.reservation))
 		}
+		if p.inlineReservation != nil && p.inlineLedger != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			p.closeErr = errors.Join(p.closeErr, p.inlineLedger.ReleaseInline(ctx, p.inlineReservation))
+		}
 	})
-	return p.closeErr
+	var stagingErr error
+	if p.staging != nil {
+		stagingErr = p.staging.Close()
+	}
+	return errors.Join(p.closeErr, stagingErr)
 }
 func (s *ManagedFileResolver) Prepare(ctx context.Context, owner FileOwner, body []byte) (_ *ManagedFilePlan, retErr error) {
-	refs, err := CollectManagedResponseFiles(body)
+	preparation, err := PreflightManagedInlineFiles(ctx, body, DefaultManagedInlineLimits())
 	if err != nil {
 		return nil, err
 	}
-	if len(refs) > managedfiles.MaxUniqueFiles {
-		return nil, ErrManagedFileUnsupportedInput
-	}
-	if len(refs) == 0 {
+	if len(preparation.Files()) == 0 {
 		return nil, nil
 	}
+	if managedResponseStorageUnsupported(body) {
+		return nil, ErrManagedFileUnsupportedInput
+	}
+	refs := managedPublicReferences(preparation.Files())
 	if !s.Enabled() {
 		return nil, ErrFilesDisabled
 	}
@@ -97,11 +113,8 @@ func (s *ManagedFileResolver) Prepare(ctx context.Context, owner FileOwner, body
 		}
 	}()
 	ids := make([]string, 0, len(refs))
-	type messageBudget struct {
-		positions int
-		bytes     int64
-	}
-	budgets := make(map[int]messageBudget)
+	metadata := make([]ManagedInlinePublicFile, 0, len(refs))
+	snapshots := make(map[string]*StoredFile, len(refs))
 	for _, ref := range refs {
 		f, err := s.files.Get(ctx, owner, ref.PublicID)
 		if err != nil {
@@ -113,22 +126,22 @@ func (s *ManagedFileResolver) Prepare(ctx context.Context, owner FileOwner, body
 		if f.Bytes <= 0 || f.Bytes > managedfiles.MaxFileBytes {
 			return nil, ErrInvalidFile
 		}
-		for _, position := range ref.Positions {
-			b := budgets[position.Input]
-			if b.positions >= managedfiles.MaxMessagePositions || f.Bytes > managedfiles.MaxMessageBytes-b.bytes {
-				return nil, ErrManagedFileUnsupportedInput
-			}
-			b.positions++
-			b.bytes += f.Bytes
-			budgets[position.Input] = b
-		}
+		metadata = append(metadata, ManagedInlinePublicFile{PublicID: f.PublicID, Bytes: f.Bytes})
+		snapshots[ref.PublicID] = f
 		ids = append(ids, ref.PublicID)
 	}
-	lookup, err := s.ledger.LookupBindings(ctx, owner, ids)
+	checked, err := preparation.WithPublicFiles(metadata)
 	if err != nil {
 		return nil, err
 	}
-	plan.RequiredAccountID = lookup.AccountID
+	plan.preparation = checked
+	if len(ids) > 0 {
+		lookup, err := s.ledger.LookupBindings(ctx, owner, ids)
+		if err != nil {
+			return nil, err
+		}
+		plan.RequiredAccountID = lookup.AccountID
+	}
 	for _, ref := range refs {
 		f, reader, err := s.files.Open(ctx, owner, ref.PublicID)
 		if err != nil {
@@ -138,7 +151,36 @@ func (s *ManagedFileResolver) Prepare(ctx context.Context, owner FileOwner, body
 		if !managedResolverReady(f, owner) {
 			return nil, ErrFileNotFound
 		}
+		before := snapshots[ref.PublicID]
+		if f.Version != before.Version || f.Bytes != before.Bytes || f.SHA256 != before.SHA256 || f.Filename != before.Filename || f.MIME != before.MIME {
+			return nil, ErrFileLeaseConflict
+		}
 		plan.files = append(plan.files, f)
+	}
+	hasInline := false
+	for _, file := range checked.Files() {
+		hasInline = hasInline || file.PublicID == ""
+	}
+	if hasInline {
+		plan.staging, err = StageManagedInlineFiles(ctx, checked, s.files.cfg.Root)
+		if err != nil {
+			return nil, err
+		}
+		plan.requestID, err = fileToken()
+		if err != nil {
+			return nil, err
+		}
+		plan.inlineRefs = make(map[managedfiles.Position]string)
+		for _, file := range checked.Files() {
+			if file.PublicID != "" {
+				continue
+			}
+			token, err := fileToken()
+			if err != nil {
+				return nil, err
+			}
+			plan.inlineRefs[file.Position] = "file-inline-" + token
+		}
 	}
 	return plan, nil
 }
@@ -173,9 +215,20 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	refs, err := CollectManagedResponseFiles(finalBody)
-	if err != nil || !reflect.DeepEqual(refs, plan.refs) {
+	finalPreparation, err := PreflightManagedInlineFiles(ctx, finalBody, DefaultManagedInlineLimits())
+	if err != nil || managedResponseStorageUnsupported(finalBody) || !sameManagedFilePreparation(plan.preparation, finalPreparation) {
 		return nil, ErrManagedFileUnsupportedInput
+	}
+	if plan.staging != nil {
+		var ok bool
+		plan.inlineLedger, ok = s.ledger.(ManagedInlineOperationRepository)
+		if !ok {
+			return nil, ErrManagedFileNotReady
+		}
+	}
+	template, err := managedInlineTemplate(plan, finalBody)
+	if err != nil {
+		return nil, err
 	}
 	backendConfig, err := BPSFilesConfigForAccount(account)
 	if err != nil {
@@ -202,26 +255,33 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 	if err != nil {
 		return nil, err
 	}
+	if plan.requestID != "" {
+		requestID = plan.requestID
+	}
+	selection := ManagedFileSelection{AccountID: account.ID, Identity: backendConfig.Expected}
 	versions := make([]ManagedFileVersion, 0, len(plan.files))
 	for _, file := range plan.files {
 		versions = append(versions, ManagedFileVersion{PublicID: file.PublicID, Version: file.Version})
 	}
-	reservation, err := s.ledger.Reserve(resolveCtx, ManagedFileReserveInput{Owner: plan.owner, Files: versions, Selection: ManagedFileSelection{AccountID: account.ID, Identity: backendConfig.Expected}, LeaseToken: token, Lease: managedFileReservationLease})
-	if err != nil {
-		return nil, err
-	}
-	plan.reservation = reservation
-	if reservation == nil || reservation.Owner != plan.owner || reservation.Selection != (ManagedFileSelection{AccountID: account.ID, Identity: backendConfig.Expected}) || len(reservation.Files) != len(plan.files) {
-		return nil, ErrManagedFileNotReady
-	}
-	bindings := make(map[string]ManagedFileBinding, len(reservation.Files))
-	for _, binding := range reservation.Files {
-		if binding.File == nil || bindings[binding.File.PublicID].File != nil {
+	var reservation *ManagedFileReservation
+	bindings := make(map[string]ManagedFileBinding, len(plan.files))
+	if len(versions) > 0 {
+		reservation, err = s.ledger.Reserve(resolveCtx, ManagedFileReserveInput{Owner: plan.owner, Files: versions, Selection: selection, LeaseToken: token, Lease: managedFileReservationLease})
+		if err != nil {
+			return nil, err
+		}
+		plan.reservation = reservation
+		if reservation == nil || reservation.Owner != plan.owner || reservation.Selection != selection || len(reservation.Files) != len(plan.files) {
 			return nil, ErrManagedFileNotReady
 		}
-		bindings[binding.File.PublicID] = binding
+		for _, binding := range reservation.Files {
+			if binding.File == nil || bindings[binding.File.PublicID].File != nil {
+				return nil, ErrManagedFileNotReady
+			}
+			bindings[binding.File.PublicID] = binding
+		}
 	}
-	manifest := managedfiles.AdmitManifest{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, RequestID: requestID, Expected: backendConfig.Expected, OwnerRef: strconv.FormatInt(plan.owner.UserID, 10), GroupRef: strconv.FormatInt(plan.owner.GroupID, 10), RequestTemplate: append([]byte(nil), finalBody...)}
+	manifest := managedfiles.AdmitManifest{Contract: managedfiles.Contract, JSONProfile: managedfiles.JSONProfile, RequestID: requestID, Expected: backendConfig.Expected, OwnerRef: strconv.FormatInt(plan.owner.UserID, 10), GroupRef: strconv.FormatInt(plan.owner.GroupID, 10), RequestTemplate: template}
 	readers := make(map[string]io.Reader)
 	var total int64
 	for i, file := range plan.files {
@@ -246,6 +306,48 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 			return nil, ErrManagedFileNotReady
 		}
 		manifest.Files = append(manifest.Files, f)
+	}
+	inlineBindings := make(map[string]ManagedInlineBinding)
+	if plan.staging != nil {
+		staged := plan.staging.Files()
+		descriptors := make([]ManagedInlineDescriptor, 0, len(plan.inlineRefs))
+		for _, file := range staged {
+			if file.PublicID == "" {
+				descriptors = append(descriptors, ManagedInlineDescriptor{FileRef: plan.inlineRefs[file.Position], Filename: file.Filename, MIME: file.MIME, SHA256: file.SHA256, Bytes: file.Bytes})
+			}
+		}
+		inline, err := plan.inlineLedger.ReserveInline(resolveCtx, ManagedInlineReserveInput{Owner: plan.owner, Selection: selection, RequestID: requestID, LeaseToken: token, Lease: managedFileReservationLease, Files: descriptors})
+		if err != nil {
+			return nil, err
+		}
+		plan.inlineReservation = inline
+		if inline == nil || inline.Owner != plan.owner || inline.Selection != selection || inline.RequestID != requestID || inline.LeaseToken != token || len(inline.Files) != len(descriptors) {
+			return nil, ErrManagedFileNotReady
+		}
+		for _, binding := range inline.Files {
+			if inlineBindings[binding.Descriptor.FileRef].Operation.ID != "" || binding.Operation.ID == "" || binding.Operation.State != "reserved" {
+				return nil, ErrManagedFileNotReady
+			}
+			inlineBindings[binding.Descriptor.FileRef] = binding
+		}
+		for i, file := range staged {
+			if file.PublicID != "" {
+				continue
+			}
+			ref := plan.inlineRefs[file.Position]
+			binding, ok := inlineBindings[ref]
+			want := ManagedInlineDescriptor{FileRef: ref, Filename: file.Filename, MIME: file.MIME, SHA256: file.SHA256, Bytes: file.Bytes}
+			if !ok || binding.Descriptor != want {
+				return nil, ErrManagedFileNotReady
+			}
+			reader, err := plan.staging.Open(i)
+			if err != nil {
+				return nil, err
+			}
+			plan.readers[ref], readers[ref] = reader, reader
+			manifest.Files = append(manifest.Files, managedfiles.File{FileRef: ref, Mode: "upload", Part: fmt.Sprintf("file_%d", len(manifest.Files)), Filename: file.Filename, MIME: file.MIME, Bytes: file.Bytes, SHA256: file.SHA256, Positions: []managedfiles.Position{file.Position}})
+			total += file.Bytes
+		}
 	}
 	if err := managedfiles.ValidateManifest(manifest); err != nil {
 		return nil, err
@@ -294,22 +396,35 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 		if !time.Now().Before(expires) {
 			return nil, ErrManagedFileNotReady
 		}
-		binding := bindings[file.FileRef]
-		if err := s.ledger.StartOperation(resolveCtx, reservation, file.FileRef); err != nil {
+		binding, permanent := bindings[file.FileRef]
+		operationID := inlineBindings[file.FileRef].Operation.ID
+		if permanent {
+			operationID = binding.Operation.ID
+			err = s.ledger.StartOperation(resolveCtx, reservation, file.FileRef)
+		} else {
+			err = plan.inlineLedger.StartInline(resolveCtx, plan.inlineReservation, file.FileRef)
+		}
+		if err != nil {
 			return nil, err
 		}
-		result, err := backend.EnsureUploaded(resolveCtx, managedfiles.EnsureRequest{Contract: managedfiles.Contract, Expected: backendConfig.Expected, AdmissionID: admission.AdmissionID, FileRef: file.FileRef, OperationID: binding.Operation.ID}, file)
+		result, err := backend.EnsureUploaded(resolveCtx, managedfiles.EnsureRequest{Contract: managedfiles.Contract, Expected: backendConfig.Expected, AdmissionID: admission.AdmissionID, FileRef: file.FileRef, OperationID: operationID}, file)
 		if err != nil {
-			s.markUncertain(reservation, file.FileRef)
+			s.markPlanFileUncertain(plan, file.FileRef, permanent)
 			return nil, err
 		}
 		// Preserve a confirmed remote copy even when caller cancellation or a late
 		// deadline would otherwise prevent this local acknowledgement from committing.
 		persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		active, completeErr := s.ledger.CompleteOperation(persistCtx, reservation, file.FileRef, result)
+		var active bool
+		var completeErr error
+		if permanent {
+			active, completeErr = s.ledger.CompleteOperation(persistCtx, reservation, file.FileRef, result)
+		} else {
+			active, completeErr = plan.inlineLedger.CompleteInline(persistCtx, plan.inlineReservation, file.FileRef, result)
+		}
 		persistCancel()
 		if completeErr != nil {
-			s.markUncertain(reservation, file.FileRef)
+			s.markPlanFileUncertain(plan, file.FileRef, permanent)
 			return nil, completeErr
 		}
 		if !active {
@@ -341,16 +456,72 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return s.ledger.AuthorizeGeneration(c, reservation)
+		return s.authorizeManagedPlan(c, plan)
 	}
 	// The transport repeats this check immediately before the one external send.
 	if !time.Now().Before(expires) {
 		return nil, ErrManagedFileNotReady
 	}
-	if err := s.ledger.AuthorizeGeneration(resolveCtx, reservation); err != nil {
+	if err := s.authorizeManagedPlan(resolveCtx, plan); err != nil {
 		return nil, err
 	}
 	return resolved, nil
+}
+
+func managedInlineTemplate(plan *ManagedFilePlan, body []byte) ([]byte, error) {
+	if len(plan.inlineRefs) == 0 {
+		return append([]byte(nil), body...), nil
+	}
+	value, err := managedfiles.Parse(body)
+	if err != nil {
+		return nil, ErrManagedFileUnsupportedInput
+	}
+	root := value.(map[string]any)
+	input := root["input"].([]any)
+	for position, ref := range plan.inlineRefs {
+		part := input[position.Input].(map[string]any)["content"].([]any)[position.Part].(map[string]any)
+		part["file_id"] = ref
+		delete(part, "file_data")
+	}
+	return json.Marshal(root)
+}
+
+func (s *ManagedFileResolver) authorizeManagedPlan(ctx context.Context, plan *ManagedFilePlan) error {
+	if plan.reservation != nil {
+		if err := s.ledger.AuthorizeGeneration(ctx, plan.reservation); err != nil {
+			return err
+		}
+	}
+	if plan.inlineReservation != nil {
+		return plan.inlineLedger.AuthorizeInlineGeneration(ctx, plan.inlineReservation)
+	}
+	return nil
+}
+
+func (s *ManagedFileResolver) markPlanFileUncertain(plan *ManagedFilePlan, ref string, permanent bool) {
+	if permanent {
+		s.markUncertain(plan.reservation, ref)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = plan.inlineLedger.MarkInlineUncertain(ctx, plan.inlineReservation, ref, "upload_outcome_unknown")
+}
+
+func sameManagedFilePreparation(original, final *ManagedInlinePreparation) bool {
+	if original == nil || final == nil || len(original.entries) != len(final.entries) {
+		return false
+	}
+	for i, before := range original.entries {
+		after := final.entries[i]
+		if before.description.PublicID != "" {
+			before.description.Bytes = 0 // Fresh owner metadata supplies this budget.
+		}
+		if !reflect.DeepEqual(before, after) {
+			return false
+		}
+	}
+	return true
 }
 func (s *ManagedFileResolver) markUncertain(reservation *ManagedFileReservation, ref string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -56,12 +56,7 @@ func (h *OpenAIGatewayHandler) ManagedFilesIngress(c *gin.Context) {
 		c.Next()
 		return
 	}
-	refs, err := service.CollectManagedResponseFiles(body)
-	if err != nil {
-		rejectManagedFilesUnsupported(c)
-		return
-	}
-	if len(refs) == 0 {
+	if !service.HasManagedResponseFiles(body) {
 		c.Next()
 		return
 	}
@@ -146,22 +141,23 @@ func managedContentFileReference(content gjson.Result, depth int) bool {
 	}
 	found := false
 	visit := func(part gjson.Result) bool {
-		fileKind, directKind, toolResult := false, false, false
+		fileKind, directKind, imageKind, toolResult := false, false, false, false
 		part.ForEach(func(k, v gjson.Result) bool {
 			if strings.EqualFold(k.String(), "type") {
-				fileKind = fileKind || v.String() == "file"
-				directKind = directKind || v.String() == "input_file" || v.String() == "input_image"
+				fileKind = fileKind || strings.EqualFold(v.String(), "file")
+				directKind = directKind || strings.EqualFold(v.String(), "input_file")
+				imageKind = imageKind || strings.EqualFold(v.String(), "input_image")
 				toolResult = toolResult || v.String() == "tool_result"
 			}
 			return true
 		})
 		part.ForEach(func(k, v gjson.Result) bool {
-			if directKind && strings.EqualFold(k.String(), "file_id") {
+			if directKind || imageKind && strings.EqualFold(k.String(), "file_id") {
 				found = true
 			}
 			if fileKind && strings.EqualFold(k.String(), "file") {
 				v.ForEach(func(k, _ gjson.Result) bool {
-					if strings.EqualFold(k.String(), "file_id") {
+					if strings.EqualFold(k.String(), "file_id") || strings.EqualFold(k.String(), "file_data") || strings.EqualFold(k.String(), "file_url") {
 						found = true
 					}
 					return !found
@@ -185,8 +181,7 @@ func (h *OpenAIGatewayHandler) managedFilesWSUnsupported(body []byte) bool {
 	if !h.managedFilesEnabled() {
 		return false
 	}
-	refs, err := service.CollectManagedResponseFiles(body)
-	if err != nil || len(refs) > 0 {
+	if service.HasManagedResponseFiles(body) {
 		return true
 	}
 	found := false
@@ -204,8 +199,7 @@ func (h *OpenAIGatewayHandler) managedFilesWSUnsupported(body []byte) bool {
 				return !found
 			})
 		case strings.EqualFold(key.String(), "session"), strings.EqualFold(key.String(), "response"):
-			refs, err := service.CollectManagedResponseFiles([]byte(value.Raw))
-			found = err != nil || len(refs) > 0
+			found = service.HasManagedResponseFiles([]byte(value.Raw))
 			if !found {
 				value.ForEach(func(key, content gjson.Result) bool {
 					if strings.EqualFold(key.String(), "content") {
