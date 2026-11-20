@@ -200,46 +200,18 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 		}
-		if filesRequest && c.Request.Method == http.MethodPost {
-			// A long upload must not publish under credentials revoked while its
-			// body was streaming. This bypasses the authentication cache.
-			c.Set(fileUploadReauthorizeKey, func(check context.Context) error {
-				fresh, err := apiKeyService.GetForFilePublication(check, apiKeyString)
-				if err != nil {
-					if errors.Is(err, service.ErrAPIKeyNotFound) {
-						return service.ErrFileAuthorizationRevoked
-					}
-					return service.ErrFileAuthorizationUnavailable
-				}
-				if fresh == nil || fresh.ID != apiKey.ID || fresh.UserID != apiKey.UserID || fresh.GroupID == nil || apiKey.GroupID == nil || *fresh.GroupID != *apiKey.GroupID || fresh.User == nil || !fresh.User.IsActive() || (fresh.Status != service.StatusActive && fresh.Status != service.StatusAPIKeyQuotaExhausted) || fresh.IsExpired() {
-					return service.ErrFileAuthorizationRevoked
-				}
-				if _, _, ok := validateAPIKeyGroupAvailable(fresh); !ok {
-					return service.ErrFileAuthorizationRevoked
-				}
-				if !validateAPIKeyGroupAllowed(fresh) || fresh.Group == nil || fresh.Group.Platform != service.PlatformOpenAI {
-					return service.ErrFileAuthorizationRevoked
-				}
-				if len(fresh.IPWhitelist) > 0 || len(fresh.IPBlacklist) > 0 {
-					allowed, _ := ip.CheckIPRestrictionWithCompiledRules(ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL()), fresh.CompiledIPWhitelist, fresh.CompiledIPBlacklist)
-					if !allowed {
-						return service.ErrFileAuthorizationRevoked
-					}
-				}
-				if fresh.Group.IsSubscriptionType() {
-					if subscriptionService == nil {
-						return service.ErrFileAuthorizationUnavailable
-					}
-					sub, err := subscriptionService.GetForFilePublication(check, fresh.UserID, *fresh.GroupID)
-					if err != nil && !errors.Is(err, service.ErrSubscriptionNotFound) {
-						return service.ErrFileAuthorizationUnavailable
-					}
-					if err != nil || sub == nil || !sub.IsActive() {
-						return service.ErrFileAuthorizationRevoked
-					}
-				}
-				return nil
-			})
+		if filesRequest && c.Request.Method == http.MethodPost || isBPSRequestAuthorizationPath(c.Request.Method, c.Request.URL.Path) {
+			facts := captureRequestAuthorizationFacts(apiKey, ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL()))
+			if filesRequest && c.Request.Method == http.MethodPost {
+				// A long upload must not publish after credential revocation.
+				c.Set(fileUploadReauthorizeKey, func(check context.Context) error {
+					_, _, err := freshRequestAuthorization(check, apiKeyService, subscriptionService, apiKeyString, facts, true)
+					return err
+				})
+			} else {
+				check := newBPSRequestReauthorize(apiKeyService, subscriptionService, cfg, apiKeyString, facts)
+				c.Request = c.Request.WithContext(service.WithBPSRequestReauthorize(c.Request.Context(), check))
+			}
 		}
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
