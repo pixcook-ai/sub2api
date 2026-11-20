@@ -147,8 +147,11 @@ func provideCleanup(
 	// 仅应用生命周期启动持久反馈；构造服务本身不启动扫描任务。
 	if openAIGateway != nil {
 		openAIGateway.StartGatewayPoolReporter()
+		openAIGateway.StartOpenAITiboProber()
 	}
-	if files != nil { files.StartLifecycle() }
+	if files != nil {
+		files.StartLifecycle()
+	}
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -160,7 +163,12 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
-			{"FilesLifecycle", func() error { if files != nil { files.StopLifecycle() }; return nil }},
+			{"FilesLifecycle", func() error {
+				if files != nil {
+					files.StopLifecycle()
+				}
+				return nil
+			}},
 			{"DigestSessionStore", func() error {
 				if digestSessions != nil {
 					digestSessions.Close()
@@ -379,6 +387,7 @@ func provideCleanup(
 			}},
 			{"OpenAIWSPool", func() error {
 				if openAIGateway != nil {
+					openAIGateway.StopOpenAITiboProber()
 					openAIGateway.StopGatewayPoolReporter()
 					openAIGateway.CloseOpenAIWSPool()
 					return openAIGateway.StopOpenAIRecording(ctx)

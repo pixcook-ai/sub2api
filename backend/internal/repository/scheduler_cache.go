@@ -1210,7 +1210,7 @@ func (c *schedulerCache) writeAccountIDs(ctx context.Context, accounts []service
 
 	type metaWrite struct {
 		platform string
-		previous *redis.StatusCmd
+		previous redis.Cmder
 	}
 	pipe := c.rdb.Pipeline()
 	accountIDs := make([]int64, 0, len(accounts))
@@ -1264,11 +1264,17 @@ func (c *schedulerCache) writeAccountIDs(ctx context.Context, accounts []service
 		}
 
 		id := strconv.FormatInt(account.ID, 10)
-		pipe.Set(ctx, schedulerAccountKey(id), fullPayload, 0)
-		writes = append(writes, metaWrite{
-			platform: account.Platform,
-			previous: pipe.SetArgs(ctx, schedulerAccountMetaKey(id), metaPayload, redis.SetArgs{Get: true}),
-		})
+		if version := schedulerTiboVersion(account); account.Platform == service.PlatformOpenAI || version != "" {
+			previous := pipe.Eval(ctx, schedulerWriteAstraAccountScript,
+				[]string{schedulerAccountKey(id), schedulerAccountMetaKey(id)}, string(fullPayload), string(metaPayload), version)
+			writes = append(writes, metaWrite{platform: account.Platform, previous: previous})
+		} else {
+			pipe.Set(ctx, schedulerAccountKey(id), fullPayload, 0)
+			writes = append(writes, metaWrite{
+				platform: account.Platform,
+				previous: pipe.SetArgs(ctx, schedulerAccountMetaKey(id), metaPayload, redis.SetArgs{Get: true}),
+			})
+		}
 		// Keep the hot LastUsedAt side key untouched: a lagging snapshot rebuild
 		// must not overwrite a newer scheduler update.
 		accountIDs = append(accountIDs, account.ID)
@@ -1295,8 +1301,17 @@ func (c *schedulerCache) writeAccountIDs(ctx context.Context, accounts []service
 
 // schedulerMetaPlatformChanged 判断 SET ... GET 取回的旧精简记录是否属于另一个平台；
 // 旧值不是合法 JSON 或缺少字符串类型的顶层 Platform 时按已变化处理。
-func schedulerMetaPlatformChanged(previous *redis.StatusCmd, platform string) bool {
-	raw, err := previous.Result()
+func schedulerMetaPlatformChanged(previous redis.Cmder, platform string) bool {
+	var raw string
+	var err error
+	switch command := previous.(type) {
+	case *redis.StatusCmd:
+		raw, err = command.Result()
+	case *redis.Cmd:
+		raw, err = command.Text()
+	default:
+		return false
+	}
 	if err != nil {
 		return false
 	}
@@ -1345,11 +1360,16 @@ func newSchedulerAccountMetaRevision() string {
 }
 
 func marshalSchedulerCacheAccount(account service.Account) ([]byte, []byte, error) {
-	fullPayload, err := json.Marshal(account)
+	type versionedAccount struct {
+		service.Account
+		AstraPolicyVersion string `json:"astra_policy_version,omitempty"`
+	}
+	version := schedulerTiboVersion(account)
+	fullPayload, err := json.Marshal(versionedAccount{Account: account, AstraPolicyVersion: version})
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal account: %w", err)
 	}
-	metaPayload, err := json.Marshal(buildSchedulerMetadataAccount(account))
+	metaPayload, err := json.Marshal(versionedAccount{Account: buildSchedulerMetadataAccount(account), AstraPolicyVersion: version})
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal account metadata: %w", err)
 	}
@@ -1591,6 +1611,10 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",
+		service.OpenAIAstraPolicyExtraKey,
+		service.OpenAITiboQualityIsolatedExtraKey,
+		service.OpenAITiboQualityIsolationAtExtraKey,
+		tiboAutoGroupSampleKey,
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {

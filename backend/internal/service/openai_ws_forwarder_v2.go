@@ -38,6 +38,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	if s == nil || account == nil {
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
+	qualityPreviousResponseID, _ := reqBody["previous_response_id"].(string)
+	if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, qualityPreviousResponseID); err != nil {
+		return nil, err
+	}
 	responseModelObserver := &upstreamResponseModelObserver{}
 
 	wsURL, err := s.buildOpenAIResponsesWSURL(account)
@@ -337,6 +341,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
+	// Acquiring the WS lease can wait; do not trust the entry snapshot here.
+	if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, qualityPreviousResponseID); err != nil {
+		return nil, err
+	}
 	if err := s.performOpenAIWSGeneratePrewarm(
 		ctx,
 		c,

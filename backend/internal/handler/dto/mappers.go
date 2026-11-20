@@ -423,6 +423,9 @@ func redactAccountManagedExtra(extra map[string]any) map[string]any {
 	}
 	redacted := make(map[string]any, len(extra))
 	for key, value := range extra {
+		if service.IsOpenAITiboPrivateExtraKey(key) {
+			continue
+		}
 		switch key {
 		case service.OllamaCloudUsageSessionExtraKey,
 			service.OllamaCloudUsageAutoRefreshExtraKey,
@@ -474,7 +477,8 @@ func AccountListItemFromAccount(a *Account) *AccountListItem {
 		return nil
 	}
 	return &AccountListItem{
-		ID: a.ID, Name: a.Name, Notes: a.Notes, Platform: a.Platform, Type: a.Type,
+		CodexTurnTickets: a.CodexTurnTickets,
+		ID:               a.ID, Name: a.Name, Notes: a.Notes, Platform: a.Platform, Type: a.Type,
 		Credentials: a.Credentials, CredentialsStatus: a.CredentialsStatus, Extra: a.Extra,
 		OllamaCloudUsage: a.OllamaCloudUsage, OpenCodeGoUsage: a.OpenCodeGoUsage,
 		ProxyID: a.ProxyID, ProxyFallbackOriginID: a.ProxyFallbackOriginID, ProxyFallbackOriginName: a.ProxyFallbackOriginName,
@@ -785,6 +789,7 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 		UpstreamReasoningEffort:    adminUpstreamReasoningEffort(l),
 		UpstreamResponseModel:      l.UpstreamResponseModel,
 		UpstreamModelMismatch:      l.UpstreamModelMismatch,
+		RouteDegraded:              l.RouteDegraded,
 		ChannelID:                  l.ChannelID,
 		ModelMappingChain:          l.ModelMappingChain,
 		UpstreamRequestID:          l.UpstreamRequestID,

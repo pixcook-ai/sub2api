@@ -471,6 +471,7 @@ func provideCleanup(
 
 	if openAIGateway != nil {
 		openAIGateway.StartGatewayPoolReporter()
+		openAIGateway.StartOpenAITiboProber()
 	}
 	if files != nil {
 		files.StartLifecycle()
@@ -709,6 +710,7 @@ func provideCleanup(
 			}},
 			{"OpenAIWSPool", func() error {
 				if openAIGateway != nil {
+					openAIGateway.StopOpenAITiboProber()
 					openAIGateway.StopGatewayPoolReporter()
 					openAIGateway.CloseOpenAIWSPool()
 					return openAIGateway.StopOpenAIRecording(ctx)

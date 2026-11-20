@@ -487,9 +487,20 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	if s == nil {
 		return nil, nil
 	}
+	if err := s.checkOpenAITiboPreviousResponseAdmission(ctx, groupID, previousResponseID); err != nil {
+		return nil, err
+	}
 	accountID, account, responseID, store := s.resolveAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	if accountID <= 0 || account == nil || store == nil {
+		// A quality-isolated owner retains its response binding. Recheck it
+		// before treating an unavailable resolution as permission to fail over.
+		if err := s.checkOpenAITiboPreviousResponseAdmission(ctx, groupID, previousResponseID); err != nil {
+			return nil, err
+		}
 		return nil, nil
+	}
+	if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, previousResponseID); err != nil {
+		return nil, err
 	}
 
 	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
@@ -585,6 +596,11 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if !account.IsOpenAIApiKey() && wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
 		return 0, nil, "", nil
 	}
+	if account.IsOpenAITiboQualityIsolated() {
+		// Isolation is reversible and does not transfer ownership of an
+		// upstream response. Preserve the binding for the admission error.
+		return 0, nil, "", nil
+	}
 	if shouldClearStickySession(account, requestedModel) || !account.IsOpenAI() || !account.IsSchedulable() {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
@@ -616,6 +632,9 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
 		if latestErr != nil || latest == nil {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			return 0, nil, "", nil
+		}
+		if latest.IsOpenAITiboQualityIsolated() {
 			return 0, nil, "", nil
 		}
 		if shouldClearStickySession(latest, requestedModel) || !latest.IsOpenAI() || !latest.IsSchedulable() {

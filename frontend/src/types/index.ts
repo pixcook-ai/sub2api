@@ -1271,6 +1271,42 @@ export interface GrokModelDiagnostics {
   mappings: GrokModelDiagnosticItem[]
 }
 
+export type TiboRouteName = 'http' | 'bps' | 'cookie_ws'
+export type TiboRouteVerdict = 'healthy' | 'unknown' | 'degraded' | 'unavailable'
+
+// Admin view of one Tibo HTTP route. `verdict` is the effective verdict used
+// for routing; `confirmed` is the last confirmed one and may differ from it
+// once the confirmation goes stale.
+export interface TiboRouteStatus {
+  route: TiboRouteName
+  verdict: TiboRouteVerdict
+  confirmed?: 'healthy' | 'degraded'
+  checked_at?: string
+  flipped_at?: string
+  next_probe_at?: string
+  pending_votes?: ('healthy' | 'degraded')[]
+  last_sample?: 'healthy' | 'unknown' | 'degraded'
+  last_http?: number
+  last_answer?: string
+  recent_samples?: { verdict: TiboRouteVerdict; at?: string }[]
+  probes_hour: number
+  flips_hour: number
+  // Calibration counters since the gateway process started. A vote window
+  // opens on a sample that disagrees with the confirmed verdict; confirmed =
+  // it flipped, rejected = later samples outvoted it.
+  vote_windows?: number
+  vote_confirmed?: number
+  vote_rejected?: number
+  // BPS only: definitive BPS samples matching / differing from the HTTP verdict.
+  shadow_agree?: number
+  shadow_disagree?: number
+}
+
+export interface CodexTurnTicketStatus {
+  model: string
+  tibo_routes?: TiboRouteStatus[]
+}
+
 export interface Account {
   id: number
   name: string
@@ -1283,12 +1319,14 @@ export interface Account {
   // 改为通过 credentials_status.has_<key> 暴露存在性。
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
+  codex_turn_tickets?: CodexTurnTicketStatus[]
   ollama_cloud_usage?: OllamaCloudUsageState
   opencode_go_usage?: OpenCodeGoUsageState
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string; reason?: string }>
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
+    openai_tibo_quality_isolated?: boolean
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
@@ -1921,6 +1959,8 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+  // Admin-only Tibo route result; omitted when route selection did not apply.
+  route_degraded?: boolean | null
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
   upstream_response_model?: string | null

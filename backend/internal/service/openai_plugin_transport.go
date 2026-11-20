@@ -129,6 +129,11 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamOnce(
 		gatewayPoolCleanupUnsent(release)
 		return nil, false, failure
 	}
+	// Recheck after any gateway ticket wait and before an upstream send.
+	if err := s.checkOpenAITiboQualityAdmissionForPrevious(request.Context(), account, ""); err != nil {
+		gatewayPoolCleanupUnsent(release)
+		return nil, false, err
+	}
 	if poolRequest {
 		gatewayPoolUsageMarkSending(request.Context(), identity)
 	}

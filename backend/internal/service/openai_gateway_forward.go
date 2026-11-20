@@ -26,12 +26,19 @@ func (s *OpenAIGatewayService) Forward(
 	account *Account,
 	body []byte,
 ) (result *OpenAIForwardResult, err error) {
+	ctx = withOpenAITiboQualityAdmission(ctx, body)
+	if err := s.checkOpenAITiboQualityAdmission(ctx, account, body); err != nil {
+		return nil, err
+	}
+	var tiboRun *openAITiboRun
+	defer func() { s.finishOpenAITiboRun(tiboRun, result, err) }()
 	// 网关池的 per-request 标记（openai_gwpool.go）：AttachRoute 往 sink 写，这里 publish 到结果上。
 	// 新增一条能打到 chatgpt.com 的转发入口时要照抄这两行。
 	ctx, gwpoolSink := withOpenAIGatewayPoolSink(ctx, c)
 	defer func() { gwpoolSink.publish(result) }()
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	resetOpenAIRouteRecord(c)
 	managedPlan := ManagedFilePlanFromContext(ctx)
 	if managedPlan != nil {
 		if s.managedFiles == nil {
@@ -149,6 +156,13 @@ func (s *OpenAIGatewayService) Forward(
 	wsDecision = resolveOpenAIWSDecisionByGatewayPool(wsDecision, account)
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	compactPath := isOpenAIResponsesCompactPath(c)
+	// Observe the direct HTTP Responses route without changing the existing
+	// WebSocket, compact, gateway-pool or managed-file transport contracts.
+	if wsDecision.Transport == OpenAIUpstreamTransportHTTPSSE && !compactPath &&
+		!account.UsesGatewayPool() && managedPlan == nil && s.openAITiboRouteApplies(account) {
+		tiboRun = s.newOpenAITiboRun(ctx, c, account, body, wsExecutionScope)
+		tiboRun.commit(c, openAITiboRouteHTTP)
+	}
 	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
 		body, err = flattenOpenAIResponsesNamespaces(c, body)
 		if err != nil {

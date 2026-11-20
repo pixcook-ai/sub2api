@@ -163,6 +163,7 @@
 
         <!-- Tab: Gateway -->
         <div v-show="activeTab === 'gateway'" class="space-y-6">
+          <TiboSettingsPanel />
           <!-- Overload Cooldown (529) Settings -->
           <div class="card">
             <div
@@ -8942,6 +8943,7 @@
 </template>
 
 <script setup lang="ts">
+import TiboSettingsPanel from '@/components/admin/TiboSettingsPanel.vue'
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { listPlatformIds } from "@/constants/platformCatalog";
 import { useI18n } from "vue-i18n";

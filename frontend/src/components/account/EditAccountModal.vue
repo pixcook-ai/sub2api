@@ -2691,6 +2691,12 @@
         </div>
       </div>
 
+      <TiboAccountHealthPanel
+        v-if="account?.platform === 'openai'"
+        :account="account"
+        @updated="emit('updated', $event)"
+      />
+
       <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'oauth'"
@@ -3794,6 +3800,7 @@ import {
   type OpenAIImageSizeTier
 } from '@/components/account/openaiImageSizeTiers'
 import Toggle from '@/components/common/Toggle.vue'
+import TiboAccountHealthPanel from '@/components/account/TiboAccountHealthPanel.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'

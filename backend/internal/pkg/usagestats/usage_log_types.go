@@ -297,6 +297,8 @@ type UsageLogFilters struct {
 	BillingType           *int8
 	BillingMode           string
 	UpstreamModelMismatch *bool
+	// RouteDegraded selects only Tibo-observed rows; nil means no filter.
+	RouteDegraded *bool
 	// TurnState 按 Codex 回合状态筛选，取值见 TurnStateFilter* 常量；空串不筛。
 	TurnState string
 	StartTime *time.Time

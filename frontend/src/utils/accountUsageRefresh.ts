@@ -82,3 +82,10 @@ export const buildGrokUsageRefreshKey = (account: Pick<Account, 'platform' | 'ex
     serializeSnapshotRefreshValue(legacyQuotaFallback)
   ].join('|')
 }
+
+// Tibo state can change while an account stays idle or manually paused.
+export const buildOpenAITiboRefreshKey = (account: Pick<Account, 'platform' | 'codex_turn_tickets' | 'extra'>): string => {
+  if (account.platform !== 'openai') return ''
+  return [account.codex_turn_tickets, account.extra?.openai_tibo_quality_isolated]
+    .map(serializeSnapshotRefreshValue).join('|')
+}

@@ -83,6 +83,32 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if account == nil {
 		return errors.New("account is nil")
 	}
+	if err := s.checkOpenAITiboQualityAdmission(ctx, account, firstClientMessage); err != nil {
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "account is isolated by Tibo quality monitoring", err)
+	}
+	// Wrap the existing turn hook, preserving pricing/slot behavior. Run the
+	// quality check after it, since acquiring the next turn can wait.
+	qualityHooks := OpenAIWSIngressHooks{}
+	if hooks != nil {
+		qualityHooks = *hooks
+	}
+	beforeQualityTurn := qualityHooks.BeforeTurn
+	qualityHooks.BeforeTurn = func(turn int) error {
+		if beforeQualityTurn != nil {
+			if err := beforeQualityTurn(turn); err != nil {
+				return err
+			}
+		}
+		if err := s.checkOpenAITiboQualityAdmissionForPrevious(ctx, account, ""); err != nil {
+			if beforeQualityTurn != nil && qualityHooks.AfterTurn != nil {
+				// The original hook may already hold the turn's concurrency slot.
+				qualityHooks.AfterTurn(turn, nil, err)
+			}
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "account is isolated by Tibo quality monitoring", err)
+		}
+		return nil
+	}
+	hooks = &qualityHooks
 	// A handler may reuse the same gin context across account failover attempts.
 	// Never let an OAuth attempt's response aliases leak into the next account.
 	setCodexToolNameReverse(c, nil)
@@ -1031,6 +1057,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// turn-state 头仍是网关持有的值，不套帧内规则。
 		payload = s.guardOpenAICodexWSFrameTurnState(c, account, payload)
 		payload = applyCodexWSFrameWireProfile(c, account, payload, clientTurnState)
+		if err := s.checkOpenAITiboQualityAdmission(ctx, account, payload); err != nil {
+			return nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "account is isolated by Tibo quality monitoring", err)
+		}
 		s.scheduleCodexWSSideCalls(c, account, baseAcquireReq.Headers, payload)
 		if err := writeCodexWSFrame(ctx, c, account, lease, payload, s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
