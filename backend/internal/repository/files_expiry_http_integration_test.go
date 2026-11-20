@@ -68,6 +68,34 @@ func TestFileLifecycleRepositoryReadRechecksExpiryAfterLockWait(t *testing.T) {
 	require.Zero(t, count)
 }
 
+func TestFileLifecycleRepositoryReadGrantNeverExtendsFixedDrain(t *testing.T) {
+	f := newLifecycleHTTPFixture(t)
+	id := f.upload(t, f.Owner, "draining.txt", "user_data", nil)
+	ctx := context.Background()
+	repo := NewFileRepository(integrationDB)
+	file, initial, err := repo.AcquireReadGrant(ctx, f.Owner.UserID, f.DBGroupID, id, "drain-reader", time.Minute, 2*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, time.Minute, initial.Until.Sub(initial.DBNow))
+	var fixed time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `UPDATE gateway_files SET expires_at=clock_timestamp()-interval '90 seconds' WHERE id=$1 RETURNING expires_at+interval '2 minutes'`, file.ID).Scan(&fixed))
+	grant, err := repo.RenewReadGrant(ctx, file.ID, "drain-reader", time.Minute, 2*time.Minute)
+	require.NoError(t, err)
+	require.True(t, fixed.Equal(grant.Until))
+	_, err = integrationDB.ExecContext(ctx, `UPDATE gateway_files SET state='retired',retired_at=clock_timestamp(),retire_reason='expired',read_drain_until=$2,lifecycle_version=lifecycle_version+1 WHERE id=$1`, file.ID, fixed)
+	require.NoError(t, err)
+	grant, err = repo.RenewReadGrant(ctx, file.ID, "drain-reader", time.Minute, 2*time.Minute)
+	require.NoError(t, err)
+	require.True(t, fixed.Equal(grant.Until))
+	_, _, err = repo.AcquireReadGrant(ctx, f.Owner.UserID, f.DBGroupID, id, "new-reader", time.Minute, 2*time.Minute)
+	require.ErrorIs(t, err, service.ErrFileNotFound)
+	_, err = repo.RenewReadGrant(ctx, file.ID, "nonexistent", time.Minute, 2*time.Minute)
+	require.ErrorIs(t, err, service.ErrFileLeaseConflict)
+	_, err = integrationDB.ExecContext(ctx, `UPDATE gateway_file_read_leases SET lease_until=clock_timestamp()-interval '1 second' WHERE file_id=$1`, file.ID)
+	require.NoError(t, err)
+	_, err = repo.RenewReadGrant(ctx, file.ID, "drain-reader", time.Minute, 2*time.Minute)
+	require.ErrorIs(t, err, service.ErrFileLeaseConflict)
+}
+
 func TestFileLifecycleHTTPExpiryWithoutWorkerAndMultipartRetention(t *testing.T) {
 	f := newLifecycleHTTPFixture(t)
 	id := f.upload(t, f.Owner, "expiring.txt", "user_data", map[string]string{

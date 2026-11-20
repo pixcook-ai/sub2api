@@ -31,10 +31,11 @@ type lifecycleHTTPFixture struct {
 	Owner, Rotated, Foreign *service.APIKey
 	Files                   *service.FileService
 	Store                   *service.PrivateFileBlobStore
+	Subscriptions           *service.SubscriptionService
 	Server                  *httptest.Server
 }
 
-func newLifecycleHTTPFixture(t *testing.T) *lifecycleHTTPFixture {
+func newLifecycleHTTPFixture(t *testing.T, requestTimeout ...time.Duration) *lifecycleHTTPFixture {
 	t.Helper()
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -55,14 +56,23 @@ func newLifecycleHTTPFixture(t *testing.T) *lifecycleHTTPFixture {
 	fc.Enabled = true
 	fc.Root = t.TempDir()
 	fc.FreeSpaceReserveBytes = 1
-	cfg := &config.Config{Gateway: config.GatewayConfig{Files: fc}, Server: config.ServerConfig{MaxRequestBodySize: 1024}}
+	cfg := &config.Config{Gateway: config.GatewayConfig{Files: fc}, Server: config.ServerConfig{MaxRequestBodySize: 1024}, SubscriptionCache: config.SubscriptionCacheConfig{L1Size: 100, L1TTLSeconds: 60}}
 	store, err := service.NewPrivateFileBlobStore(fc.Root, 1)
 	require.NoError(t, err)
 	files, err := service.NewFileService(NewFileRepository(integrationDB), store, fc)
 	require.NoError(t, err)
 	f := &lifecycleHTTPFixture{Config: cfg, DBGroupID: group.ID, Owner: key(user.ID, "owner"), Rotated: key(user.ID, "rotated"), Foreign: key(other.ID, "foreign"), Files: files, Store: store}
 	r := gin.New()
+	if len(requestTimeout) > 0 {
+		r.Use(func(c *gin.Context) {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), requestTimeout[0])
+			defer cancel()
+			c.Request = c.Request.WithContext(ctx)
+			c.Next()
+		})
+	}
 	subscriptions := service.NewSubscriptionService(nil, NewUserSubscriptionRepository(client), nil, client, cfg)
+	f.Subscriptions = subscriptions
 	auth := middleware.NewAPIKeyAuthMiddleware(service.NewAPIKeyService(keyRepo, nil, nil, nil, nil, nil, cfg), subscriptions, cfg)
 	routes.RegisterFileRoutes(r, handler.NewFileHandler(files), auth)
 	f.Server = httptest.NewServer(httpserver.ProvideHTTPServer(cfg, r).Handler)

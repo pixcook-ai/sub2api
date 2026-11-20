@@ -20,11 +20,13 @@ import (
 )
 
 var (
-	ErrFileNotFound      = errors.New("file not found")
-	ErrFileQuotaExceeded = errors.New("file storage quota exceeded")
-	ErrFileLeaseConflict = errors.New("file storage lease lost")
-	ErrInvalidFile       = errors.New("invalid file upload")
-	ErrFilesDisabled     = errors.New("files storage is disabled")
+	ErrFileNotFound                 = errors.New("file not found")
+	ErrFileQuotaExceeded            = errors.New("file storage quota exceeded")
+	ErrFileLeaseConflict            = errors.New("file storage lease lost")
+	ErrFileAuthorizationRevoked     = errors.New("file upload authorization revoked")
+	ErrFileAuthorizationUnavailable = errors.New("file upload authorization unavailable")
+	ErrInvalidFile                  = errors.New("invalid file upload")
+	ErrFilesDisabled                = errors.New("files storage is disabled")
 )
 
 // StoredFile is a local durable resource. It carries no BPS upload or processing status.
@@ -46,16 +48,24 @@ type FileOwner struct{ UserID, APIKeyID, GroupID int64 }
 type FileRepository interface {
 	ListVisibleFiles(context.Context, FileOwner, FileListQuery) (FileListPage, error)
 	Reserve(context.Context, *StoredFile, int64, int64, time.Duration) error
+	ReserveUpload(context.Context, *StoredFile, int64, int64, time.Duration, time.Duration, int, int) error
 	CommitUpload(context.Context, int64, string, int64, string, string) error
 	CommitUploadWithRetention(context.Context, int64, string, int64, string, string, *int64) (*StoredFile, error)
+	CommitUploadMetadata(context.Context, int64, string, int64, string, string, string, string, *int64) (*StoredFile, error)
 	AbortUpload(context.Context, int64, string) (bool, error)
 	GetForOwner(context.Context, int64, int64, string) (*StoredFile, error)
 	AcquireRead(context.Context, int64, int64, string, string, time.Duration) (*StoredFile, error)
+	AcquireReadGrant(context.Context, int64, int64, string, string, time.Duration, time.Duration) (*StoredFile, FileReadGrant, error)
 	RenewUpload(context.Context, int64, string, time.Duration) error
 	RenewRead(context.Context, int64, string, time.Duration) error
+	RenewReadGrant(context.Context, int64, string, time.Duration, time.Duration) (FileReadGrant, error)
 	ReleaseRead(context.Context, int64, string) error
 	ClaimStaleUploads(context.Context, string, time.Duration, int) ([]*StoredFile, error)
 	FinishCleanup(context.Context, int64, string) error
+	LifecycleCandidates(context.Context, int64, int) ([]int64, error)
+	RetireExpired(context.Context, int64, time.Duration) (bool, error)
+	ClaimLocalPurge(context.Context, int64, string, time.Duration) (*FilePurgeTicket, error)
+	ConfirmLocalPurge(context.Context, FilePurgeTicket) error
 }
 
 type FileBlobStore interface {
@@ -68,9 +78,14 @@ type FileBlobStore interface {
 }
 
 type FileService struct {
-	repo  FileRepository
-	store FileBlobStore
-	cfg   config.FilesConfig
+	repo            FileRepository
+	store           FileBlobStore
+	cfg             config.FilesConfig
+	lifecycleMu     sync.Mutex
+	lifecycleRunMu  sync.Mutex
+	lifecycleCursor int64
+	lifecycleCancel context.CancelFunc
+	lifecycleDone   chan struct{}
 }
 
 func NewFileService(repo FileRepository, store FileBlobStore, cfg config.FilesConfig) (*FileService, error) {
@@ -106,7 +121,10 @@ func ProvideFileService(repo FileRepository, cfg *config.Config) (*FileService, 
 
 func (s *FileService) Enabled() bool             { return s != nil && s.cfg.Enabled }
 func (s *FileService) MaxUploadBodyBytes() int64 { return s.cfg.MaxFileBytes + 64*1024 }
-func (s *FileService) lease() time.Duration      { return time.Duration(s.cfg.LeaseSeconds) * time.Second }
+func (s *FileService) UploadTimeout() time.Duration {
+	return time.Duration(s.cfg.UploadTimeoutSeconds) * time.Second
+}
+func (s *FileService) lease() time.Duration { return time.Duration(s.cfg.LeaseSeconds) * time.Second }
 
 func fileToken() (string, error) {
 	var b [16]byte
@@ -119,18 +137,38 @@ func fileToken() (string, error) {
 // UploadMultipart streams exactly one file; fields may appear before or after it.
 // The full max-file reservation is made before disk IO, including unknown-length uploads.
 func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, reader *multipart.Reader) (_ *StoredFile, retErr error) {
+	return s.UploadMultipartWithHooks(ctx, owner, reader, FileUploadHooks{})
+}
+
+type FileUploadHooks struct {
+	InterruptRead func()
+	Reauthorize   func(context.Context) error
+}
+
+func (s *FileService) UploadMultipartWithHooks(ctx context.Context, owner FileOwner, reader *multipart.Reader, hooks FileUploadHooks) (_ *StoredFile, retErr error) {
 	if !s.Enabled() {
 		return nil, ErrFilesDisabled
 	}
 	if owner.UserID <= 0 || owner.APIKeyID <= 0 || owner.GroupID <= 0 {
 		return nil, ErrInvalidFile
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.UploadTimeout())
+	defer cancel()
 	// Revisit uploads whose old process lease was still live during startup.
 	// This is staging recovery only; it does not expire completed Files.
 	if err := s.Recover(ctx); err != nil {
 		return nil, err
 	}
-	var record *StoredFile
+	key, err := fileToken()
+	if err != nil {
+		return nil, err
+	}
+	token, err := fileToken()
+	if err != nil {
+		return nil, err
+	}
+	record := &StoredFile{PublicID: "file-" + key, StorageKey: key, UserID: owner.UserID, APIKeyID: owner.APIKeyID, GroupID: owner.GroupID, UploadToken: token, ReservedBytes: s.cfg.MaxFileBytes, State: "staging"}
+	var fileSeen bool
 	var purpose string
 	var purposeSeen bool
 	var expiry FileExpiryInput
@@ -139,9 +177,12 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 	var stop func() error
 	defer func() {
 		if stop != nil {
-			if err := stop(); retErr == nil && err != nil {
+			if err := stop(); err != nil {
 				retErr = err
 			}
+		}
+		if retErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			retErr = ErrFileUploadDeadline
 		}
 		if retErr != nil && record != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -154,7 +195,23 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 			}
 		}
 	}()
+	if err = s.repo.ReserveUpload(ctx, record, s.cfg.UserQuotaBytes, s.cfg.GlobalQuotaBytes, s.lease(), s.UploadTimeout(), s.cfg.UserConcurrentUploads, s.cfg.GlobalConcurrentUploads); err != nil {
+		if record.ID == 0 {
+			record = nil
+		}
+		return nil, err
+	}
+	uploadCtx, leaseStop := s.keepLease(ctx, func(c context.Context) error { return s.repo.RenewUpload(c, record.ID, record.UploadToken, s.lease()) })
+	stop = leaseStop
+	stopInterrupt := func() bool { return true }
+	if hooks.InterruptRead != nil {
+		stopInterrupt = context.AfterFunc(uploadCtx, hooks.InterruptRead)
+	}
+	defer func() { stopInterrupt() }()
 	for {
+		if err = uploadCtx.Err(); err != nil {
+			return nil, err
+		}
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
 			break
@@ -192,33 +249,16 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 			}
 			purpose = string(value)
 		case "file":
-			if record != nil {
+			if fileSeen {
 				return nil, fmt.Errorf("%w: exactly one file is required", ErrInvalidFile)
 			}
+			fileSeen = true
 			filename := params["filename"]
 			contentType := part.Header.Get("Content-Type")
 			if err := validateFileMetadata(filename, contentType); err != nil {
 				return nil, err
 			}
-			key, err := fileToken()
-			if err != nil {
-				return nil, err
-			}
-			token, err := fileToken()
-			if err != nil {
-				return nil, err
-			}
-			record = &StoredFile{PublicID: "file-" + key, StorageKey: key, Filename: filename, MIME: contentType, UserID: owner.UserID, APIKeyID: owner.APIKeyID, GroupID: owner.GroupID, UploadToken: token, ReservedBytes: s.cfg.MaxFileBytes, State: "staging"}
-			if err = s.repo.Reserve(ctx, record, s.cfg.UserQuotaBytes, s.cfg.GlobalQuotaBytes, s.lease()); err != nil {
-				// Commit acknowledgement may be lost after PostgreSQL persisted the
-				// reservation. Retain an assigned ID for token-guarded cleanup.
-				if record.ID == 0 {
-					record = nil
-				}
-				return nil, err
-			}
-			var uploadCtx context.Context
-			uploadCtx, stop = s.keepLease(ctx, func(c context.Context) error { return s.repo.RenewUpload(c, record.ID, record.UploadToken, s.lease()) })
+			record.Filename, record.MIME = filename, contentType
 			size, hash, err = s.store.Stage(uploadCtx, key, part, s.cfg.MaxFileBytes)
 			if err != nil {
 				return nil, err
@@ -230,13 +270,14 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 			return nil, err
 		}
 	}
-	if record == nil || size == 0 || !validFilePurpose(purpose) {
+	if !fileSeen || size == 0 || !validFilePurpose(purpose) {
 		return nil, fmt.Errorf("%w: a nonempty file and supported purpose are required", ErrInvalidFile)
 	}
 	retention, err := expiry.RetentionSeconds(purpose, s.cfg.DefaultRetentionSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidFile, err)
 	}
+	stopInterrupt()
 	if err := stop(); err != nil {
 		stop = nil
 		return nil, err
@@ -248,7 +289,12 @@ func (s *FileService) UploadMultipart(ctx context.Context, owner FileOwner, read
 	if err := s.store.Commit(ctx, record.StorageKey); err != nil {
 		return nil, err
 	}
-	committed, err := s.repo.CommitUploadWithRetention(ctx, record.ID, record.UploadToken, size, hash, purpose, retention)
+	if hooks.Reauthorize != nil {
+		if err = hooks.Reauthorize(ctx); err != nil {
+			return nil, err
+		}
+	}
+	committed, err := s.repo.CommitUploadMetadata(ctx, record.ID, record.UploadToken, size, hash, purpose, record.Filename, record.MIME, retention)
 	if err != nil {
 		return nil, err
 	}
@@ -302,23 +348,25 @@ func (s *FileService) Open(ctx context.Context, owner FileOwner, id string) (*St
 	if err != nil {
 		return nil, nil, err
 	}
-	record, err := s.repo.AcquireRead(ctx, owner.UserID, owner.GroupID, id, token, s.lease())
+	started := time.Now()
+	drain := time.Duration(s.cfg.ReadDrainSeconds) * time.Second
+	record, grant, err := s.repo.AcquireReadGrant(ctx, owner.UserID, owner.GroupID, id, token, s.lease(), drain)
 	if err != nil {
 		return nil, nil, err
 	}
-	readCtx, stop := s.keepLease(ctx, func(c context.Context) error { return s.repo.RenewRead(c, record.ID, token, s.lease()) })
 	release := func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.repo.ReleaseRead(cleanupCtx, record.ID, token)
 	}
-	reader, err := s.store.Open(readCtx, record.StorageKey)
+	reader, err := s.store.Open(ctx, record.StorageKey)
 	if err != nil {
-		_ = stop()
 		release()
 		return nil, nil, err
 	}
-	return record, &leasedFileReader{ReadCloser: reader, ctx: readCtx, stop: stop, release: release}, nil
+	return record, newGrantedFileReader(ctx, reader, started, grant, s.lease(), func(c context.Context) (FileReadGrant, error) {
+		return s.repo.RenewReadGrant(c, record.ID, token, s.lease(), drain)
+	}, release), nil
 }
 
 // Recover only reclaims expired upload/cleanup leases, never active uploads or reads.
@@ -379,30 +427,4 @@ func (s *FileService) keepLease(parent context.Context, renew func(context.Conte
 		}
 	}()
 	return ctx, func() error { once.Do(func() { close(stop); <-done; cancel() }); return leaseErr }
-}
-
-type leasedFileReader struct {
-	io.ReadCloser
-	ctx      context.Context
-	stop     func() error
-	release  func()
-	once     sync.Once
-	closeErr error
-}
-
-func (r *leasedFileReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.ReadCloser.Read(p)
-}
-func (r *leasedFileReader) Close() error {
-	r.once.Do(func() {
-		r.closeErr = r.ReadCloser.Close()
-		if err := r.stop(); r.closeErr == nil {
-			r.closeErr = err
-		}
-		r.release()
-	})
-	return r.closeErr
 }

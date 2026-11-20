@@ -26,6 +26,17 @@ type FileListPage struct {
 	HasMore bool
 }
 
+// FileReadGrant carries the actual database lease, including any fixed drain
+// cap. Callers conservatively anchor its remaining duration before the SQL call.
+type FileReadGrant struct {
+	DBNow, Until time.Time
+}
+
+type FilePurgeTicket struct {
+	ID, Version       int64
+	StorageKey, Token string
+}
+
 // FileLifecycleSnapshot is trusted state read while its file row is locked.
 // It is never accepted from a public request or returned as a File object.
 type FileLifecycleSnapshot struct {
