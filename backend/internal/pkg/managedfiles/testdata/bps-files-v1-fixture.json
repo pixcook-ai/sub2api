@@ -1,0 +1,341 @@
+{
+  "contract": "bps-files/1",
+  "json_profile": "bps-files-json/1",
+  "generator": "independent Python 3 json integers and hashlib; literal numeric-spelling canonical vectors",
+  "success": [
+    {
+      "name": "two-files-and-repeated-position",
+      "raw_template": "{\"model\":\"fixture\",\"metadata\":{\"n\":9007199254740993},\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Read both\"},{\"type\":\"input_file\",\"file_id\":\"file-public-a\"},{\"type\":\"input_file\",\"file_id\":\"file-public-b\"},{\"type\":\"input_file\",\"file_id\":\"file-public-a\"}]},{\"type\":\"function_call\",\"call_id\":\"c\",\"name\":\"f\",\"arguments\":\"{\\\"file_id\\\":\\\"file-public-a\\\"}\"}]}",
+      "manifest": {
+        "contract": "bps-files/1",
+        "json_profile": "bps-files-json/1",
+        "request_id": "request-1",
+        "expected": {
+          "backend_id": "backend-1",
+          "subject_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "credential_generation": "epoch-1"
+        },
+        "owner_ref": "owner-1",
+        "group_ref": "group-1",
+        "request_template": {
+          "model": "fixture",
+          "metadata": {
+            "n": 9007199254740993
+          },
+          "input": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "Read both"
+                },
+                {
+                  "type": "input_file",
+                  "file_id": "file-public-a"
+                },
+                {
+                  "type": "input_file",
+                  "file_id": "file-public-b"
+                },
+                {
+                  "type": "input_file",
+                  "file_id": "file-public-a"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "c",
+              "name": "f",
+              "arguments": "{\"file_id\":\"file-public-a\"}"
+            }
+          ]
+        },
+        "files": [
+          {
+            "file_ref": "file-public-a",
+            "mode": "upload",
+            "part": "file_0",
+            "filename": "a.txt",
+            "mime": "text/plain",
+            "bytes": 2,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "positions": [
+              {
+                "input": 0,
+                "part": 1
+              },
+              {
+                "input": 0,
+                "part": 3
+              }
+            ]
+          },
+          {
+            "file_ref": "file-public-b",
+            "mode": "existing",
+            "filename": "b.pdf",
+            "mime": "application/pdf",
+            "bytes": 3,
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "remote_id": "file-remote-b",
+            "operation_id": "operation-b",
+            "positions": [
+              {
+                "input": 0,
+                "part": 2
+              }
+            ]
+          }
+        ]
+      },
+      "ensure_results": [
+        {
+          "contract": "bps-files/1",
+          "identity": {
+            "backend_id": "backend-1",
+            "subject_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "credential_generation": "epoch-1"
+          },
+          "operation_id": "operation-a",
+          "file_ref": "file-public-a",
+          "remote_id": "file-remote-a",
+          "bytes": 2,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "filename": "a.txt",
+          "mime": "text/plain",
+          "input_tokens": 7,
+          "ready": true,
+          "wire_sha256": "e687ad2505e4393607acd5b80bdee55ad2e07f1b4b8c2f2a92aa89b2fe5a4577",
+          "binding_sha256": "6dc7070a02762abefd23a2fce5df92dff295277ebe4505ac580fb7fbcabc8fc8"
+        }
+      ],
+      "canonical_template": "{\"input\":[{\"content\":[{\"text\":\"Read both\",\"type\":\"input_text\"},{\"file_id\":\"file-public-a\",\"type\":\"input_file\"},{\"file_id\":\"file-public-b\",\"type\":\"input_file\"},{\"file_id\":\"file-public-a\",\"type\":\"input_file\"}],\"role\":\"user\"},{\"arguments\":\"{\\\"file_id\\\":\\\"file-public-a\\\"}\",\"call_id\":\"c\",\"name\":\"f\",\"type\":\"function_call\"}],\"metadata\":{\"n\":9007199254740993},\"model\":\"fixture\"}",
+      "canonical_wire": "{\"input\":[{\"content\":[{\"text\":\"Read both\",\"type\":\"input_text\"},{\"file_id\":\"file-remote-a\",\"type\":\"input_file\"},{\"file_id\":\"file-remote-b\",\"type\":\"input_file\"},{\"file_id\":\"file-remote-a\",\"type\":\"input_file\"}],\"role\":\"user\"},{\"arguments\":\"{\\\"file_id\\\":\\\"file-public-a\\\"}\",\"call_id\":\"c\",\"name\":\"f\",\"type\":\"function_call\"}],\"metadata\":{\"n\":9007199254740993},\"model\":\"fixture\"}",
+      "canonical_binding": "{\"contract\":\"bps-files/1\",\"expected_identity\":{\"backend_id\":\"backend-1\",\"credential_generation\":\"epoch-1\",\"subject_fingerprint\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"},\"files\":[{\"bytes\":2,\"file_ref\":\"file-public-a\",\"filename\":\"a.txt\",\"mime\":\"text/plain\",\"operation_id\":\"operation-a\",\"positions\":[{\"input\":0,\"part\":1},{\"input\":0,\"part\":3}],\"remote_id\":\"file-remote-a\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"bytes\":3,\"file_ref\":\"file-public-b\",\"filename\":\"b.pdf\",\"mime\":\"application/pdf\",\"operation_id\":\"operation-b\",\"positions\":[{\"input\":0,\"part\":2}],\"remote_id\":\"file-remote-b\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"group_ref\":\"group-1\",\"json_profile\":\"bps-files-json/1\",\"owner_ref\":\"owner-1\",\"template_sha256\":\"adacd87e219dba3ab88f1a17c29ef928f1628303b79067f733c522628d27cb4e\",\"wire_sha256\":\"e687ad2505e4393607acd5b80bdee55ad2e07f1b4b8c2f2a92aa89b2fe5a4577\"}",
+      "template_sha256": "adacd87e219dba3ab88f1a17c29ef928f1628303b79067f733c522628d27cb4e",
+      "wire_sha256": "e687ad2505e4393607acd5b80bdee55ad2e07f1b4b8c2f2a92aa89b2fe5a4577",
+      "binding_sha256": "6dc7070a02762abefd23a2fce5df92dff295277ebe4505ac580fb7fbcabc8fc8"
+    }
+  ],
+  "canonical": [
+    {
+      "name": "exact-number-spelling",
+      "raw": "{\"c\":1e400,\"b\":18446744073709551616,\"a\":[1,1.0,1e0,-0,0.12345678901234567890123456789]}",
+      "canonical": "{\"a\":[1,1.0,1e0,-0,0.12345678901234567890123456789],\"b\":18446744073709551616,\"c\":1e400}",
+      "template_sha256": "ae7899c822e7f39e64c710e28c74e8352aa34755000cacd976b8ea2bde2894b3",
+      "wire_sha256": "ec59348865618bed9d27f995795d73c9f37466e20bf9682e1a2cccb8a8246c4c"
+    },
+    {
+      "name": "unicode-and-html",
+      "raw": "{\"z\":\"<>&\\u2028\\u2029😀\",\"é\":\"NFC\",\"é\":\"NFD\"}",
+      "canonical": "{\"é\":\"NFD\",\"z\":\"\\u003c\\u003e\\u0026\\u2028\\u2029😀\",\"é\":\"NFC\"}",
+      "template_sha256": "0262e2c3a41d4630560a6c9877de1ece193be29340f22c999d30d76b5749cfea",
+      "wire_sha256": "92c30a34299e844fb06f70d73730b3602ad71cae6eb2261a1e85e28412fd7bc5"
+    }
+  ],
+  "reject_json": [
+    {
+      "name": "duplicate",
+      "raw": "{\"a\":1,\"a\":2}",
+      "code": "duplicate_json_key"
+    },
+    {
+      "name": "escaped-duplicate",
+      "raw": "{\"a\":1,\"\\u0061\":2}",
+      "code": "duplicate_json_key"
+    },
+    {
+      "name": "nested-duplicate",
+      "raw": "[{\"a\":1,\"a\":2}]",
+      "code": "duplicate_json_key"
+    },
+    {
+      "name": "high-surrogate",
+      "raw": "{\"s\":\"\\ud800\"}",
+      "code": "invalid_managed_json"
+    },
+    {
+      "name": "low-surrogate",
+      "raw": "{\"s\":\"\\udc00\"}",
+      "code": "invalid_managed_json"
+    },
+    {
+      "name": "trailing-value",
+      "raw": "{} []",
+      "code": "invalid_managed_json"
+    },
+    {
+      "name": "invalid-utf8",
+      "raw_base64": "Iv8i",
+      "code": "invalid_managed_json"
+    }
+  ],
+  "http": {
+    "describe_result": {
+      "contract": "bps-files/1",
+      "backend_id": "backend-1",
+      "subject_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "credential_generation": "epoch-1",
+      "json_profile": "bps-files-json/1",
+      "limits": {
+        "file_bytes": 209715200,
+        "message_bytes": 524288000,
+        "message_positions": 20,
+        "staging_bytes": 2147483648,
+        "admission_bytes": 524288000,
+        "concurrent_admissions": 4,
+        "live_admissions": 32,
+        "admission_ttl_seconds": 600,
+        "manifest_bytes": 67108864,
+        "unique_files": 128,
+        "free_space_reserve_bytes": 1073741824,
+        "admit_timeout_seconds": 300,
+        "ensure_timeout_seconds": 300
+      },
+      "capabilities": {
+        "batch_admit": true,
+        "ensure_upload": true,
+        "metadata_recovery": false
+      }
+    },
+    "admit_manifest": {
+      "contract": "bps-files/1",
+      "json_profile": "bps-files-json/1",
+      "request_id": "request-1",
+      "expected": {
+        "backend_id": "backend-1",
+        "subject_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "credential_generation": "epoch-1"
+      },
+      "owner_ref": "owner-1",
+      "group_ref": "group-1",
+      "request_template": {
+        "model": "fixture",
+        "metadata": {
+          "n": 9007199254740993
+        },
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Read both"
+              },
+              {
+                "type": "input_file",
+                "file_id": "file-public-a"
+              },
+              {
+                "type": "input_file",
+                "file_id": "file-public-b"
+              },
+              {
+                "type": "input_file",
+                "file_id": "file-public-a"
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "c",
+            "name": "f",
+            "arguments": "{\"file_id\":\"file-public-a\"}"
+          }
+        ]
+      },
+      "files": [
+        {
+          "file_ref": "file-public-a",
+          "mode": "upload",
+          "part": "file_0",
+          "filename": "a.txt",
+          "mime": "text/plain",
+          "bytes": 2,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "positions": [
+            {
+              "input": 0,
+              "part": 1
+            },
+            {
+              "input": 0,
+              "part": 3
+            }
+          ]
+        },
+        {
+          "file_ref": "file-public-b",
+          "mode": "existing",
+          "filename": "b.pdf",
+          "mime": "application/pdf",
+          "bytes": 3,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "remote_id": "file-remote-b",
+          "operation_id": "operation-b",
+          "positions": [
+            {
+              "input": 0,
+              "part": 2
+            }
+          ]
+        }
+      ]
+    },
+    "admit_result": {
+      "contract": "bps-files/1",
+      "json_profile": "bps-files-json/1",
+      "identity": {
+        "backend_id": "backend-1",
+        "subject_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "credential_generation": "epoch-1"
+      },
+      "admission_id": "admission-1",
+      "expires_at": 2000000000,
+      "template_sha256": "adacd87e219dba3ab88f1a17c29ef928f1628303b79067f733c522628d27cb4e",
+      "ready": false,
+      "files": [
+        {
+          "file_ref": "file-public-a",
+          "state": "staged"
+        },
+        {
+          "file_ref": "file-public-b",
+          "state": "known"
+        }
+      ]
+    },
+    "ensure_request": {
+      "contract": "bps-files/1",
+      "expected": {
+        "backend_id": "backend-1",
+        "subject_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "credential_generation": "epoch-1"
+      },
+      "admission_id": "admission-1",
+      "file_ref": "file-public-a",
+      "operation_id": "operation-a"
+    },
+    "ensure_result": {
+      "contract": "bps-files/1",
+      "identity": {
+        "backend_id": "backend-1",
+        "subject_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "credential_generation": "epoch-1"
+      },
+      "operation_id": "operation-a",
+      "file_ref": "file-public-a",
+      "remote_id": "file-remote-a",
+      "bytes": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "filename": "a.txt",
+      "mime": "text/plain",
+      "input_tokens": 7,
+      "ready": true,
+      "wire_sha256": "e687ad2505e4393607acd5b80bdee55ad2e07f1b4b8c2f2a92aa89b2fe5a4577",
+      "binding_sha256": "6dc7070a02762abefd23a2fce5df92dff295277ebe4505ac580fb7fbcabc8fc8"
+    }
+  }
+}
