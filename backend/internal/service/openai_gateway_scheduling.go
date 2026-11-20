@@ -1514,18 +1514,22 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	return nil, ErrNoAvailableAccounts
 }
 
+type storedResponseCandidatePassKey struct{}
+
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	// Managed first-reference selection validates the complete private backend
+	// Managed files and local Responses validate the complete private backend
 	// contract. Candidate snapshots deliberately omit that configuration; using
-	// them would reject every valid BPS files account before hydration. Read the
+	// them would reject valid private BPS contracts before hydration. Read the
 	// owning rows for this server-only pass, retaining the ordinary scheduler and
 	// the fresh account/configuration fences around acquisition and generation.
 	managedCandidate, _ := ctx.Value(managedFileCandidatePassKey{}).(bool)
-	if managedCandidate && s.accountRepo == nil {
+	storedCandidate, _ := ctx.Value(storedResponseCandidatePassKey{}).(bool)
+	privateCandidate := managedCandidate || storedCandidate
+	if privateCandidate && s.accountRepo == nil {
 		return nil, ErrNoAvailableAccounts
 	}
-	if s.schedulerSnapshot != nil && !managedCandidate {
+	if s.schedulerSnapshot != nil && !privateCandidate {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
 		if err != nil {
 			return accounts, err

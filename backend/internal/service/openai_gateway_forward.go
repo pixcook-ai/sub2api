@@ -40,12 +40,24 @@ func (s *OpenAIGatewayService) Forward(
 	ClearActualOpenAIUpstreamEndpoint(c)
 	resetOpenAIRouteRecord(c)
 	managedPlan := ManagedFilePlanFromContext(ctx)
+	storedPlan := StoredResponsePlanFromContext(ctx)
+	if storedPlan != nil {
+		if !storedPlan.started.CompareAndSwap(false, true) {
+			return nil, &StoredResponseLocalError{ErrStoredResponseConflict}
+		}
+		if managedPlan != nil || storedPlan.Request == nil || !storedPlan.Request.Store {
+			return nil, &StoredResponseLocalError{ErrStoredResponseUnsupported}
+		}
+		if _, configErr := BPSStoredResponsesConfigForAccount(account); configErr != nil {
+			return nil, &StoredResponseLocalError{ErrBPSStoredResponseRoute}
+		}
+	}
 	if managedPlan != nil {
 		if s.managedFiles == nil {
-			return nil, ErrManagedFileNotReady
+			return nil, &ManagedFilePreparationError{ErrManagedFileNotReady}
 		}
 		if _, configErr := BPSFilesConfigForAccount(account); configErr != nil {
-			return nil, ErrManagedFileNotReady
+			return nil, &ManagedFilePreparationError{ErrManagedFileNotReady}
 		}
 	}
 	if account.UsesOpenAIRawRelay() {
@@ -1110,30 +1122,32 @@ func (s *OpenAIGatewayService) Forward(
 	}
 
 	if managedPlan != nil {
-		resolved, resolveErr := s.managedFiles.Resolve(ctx, managedPlan, account, body)
-		if resolveErr != nil {
-			return nil, resolveErr
+		selectedConfig, configErr := BPSFilesConfigForAccount(account)
+		if configErr != nil {
+			return nil, &ManagedFilePreparationError{ErrManagedFileNotReady}
 		}
-		body = resolved.Body
-		var managedGroupID *int64
-		if value, exists := c.Get("api_key"); exists {
-			if key, valid := value.(*APIKey); valid && key != nil {
-				managedGroupID = key.GroupID
-			}
-		}
+		managedGroupID := managedPlan.owner.GroupID
 		managedAPIKey, managedBaseURL := account.GetCredential("api_key"), account.GetCredential("base_url")
-		authorizeManagedSend := func(sendCtx context.Context) error {
-			current, checkErr := s.RecheckManagedFileAccount(sendCtx, managedGroupID, account.ID, requestedModel)
+		ctx = withManagedFilePreparationAuthorization(ctx, func(checkCtx context.Context) error {
+			if err := CheckBPSRequestAuthorization(checkCtx, requestedModel); err != nil {
+				return err
+			}
+			current, checkErr := s.RecheckManagedFileAccount(checkCtx, &managedGroupID, account.ID, requestedModel)
 			if checkErr != nil {
 				return ErrManagedFileNotReady
 			}
 			currentConfig, checkErr := BPSFilesConfigForAccount(current)
-			if checkErr != nil || currentConfig != resolved.Config || current.GetCredential("api_key") != managedAPIKey || current.GetCredential("base_url") != managedBaseURL {
+			if checkErr != nil || currentConfig != selectedConfig || current.GetCredential("api_key") != managedAPIKey || current.GetCredential("base_url") != managedBaseURL {
 				return ErrManagedFileNotReady
 			}
-			return resolved.Authorize(sendCtx)
+			return nil
+		})
+		resolved, resolveErr := s.managedFiles.Resolve(ctx, managedPlan, account, body)
+		if resolveErr != nil {
+			return nil, &ManagedFilePreparationError{resolveErr}
 		}
-		ctx = withManagedFileGeneration(ctx, resolved.AccountID, resolved.Config.ServiceKey, resolved.AdmissionID, resolved.OwnerRef, resolved.GroupRef, resolved.BindingSHA256, authorizeManagedSend)
+		body = resolved.Body
+		ctx = withManagedFileGeneration(ctx, resolved.AccountID, resolved.Config.ServiceKey, resolved.AdmissionID, resolved.OwnerRef, resolved.GroupRef, resolved.BindingSHA256, resolved.Authorize)
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
@@ -1170,15 +1184,36 @@ func (s *OpenAIGatewayService) Forward(
 		}
 
 		replaceManagedFileWire(upstreamReq, body)
+		if storedPlan != nil {
+			var cleanup func() error
+			upstreamReq, ctx, cleanup, err = s.admitStoredResponse(ctx, account, upstreamReq, storedPlan)
+			if err != nil {
+				if headerGuard != nil {
+					headerGuard.close()
+				}
+				return nil, err
+			}
+			defer func() { _ = cleanup() }()
+		}
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		var preparationErr *ManagedFilePreparationError
+		if errors.As(err, &preparationErr) {
+			if headerGuard != nil {
+				headerGuard.close()
+			}
+			return nil, preparationErr
+		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
 			headerGuard.close()
+			if storedPlan != nil {
+				return nil, &StoredResponseLocalError{context.DeadlineExceeded}
+			}
 			return nil, s.newOpenAIFirstOutputTimeoutError(
 				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
 				startTime, originalModel, reasoningEffortValue,
@@ -1195,11 +1230,24 @@ func (s *OpenAIGatewayService) Forward(
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account, and temporarily
 			// unschedule the account on durable faults (e.g. rejected proxy credentials).
+			if storedPlan != nil {
+				return nil, &StoredResponseLocalError{err}
+			}
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
 		if headerGuard != nil {
 			resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 		}
+		if storedPlan != nil && !verifyStoredResponseAck(ctx, resp.Header) {
+			observed, reported := s.readUnacknowledgedStoredResponseUsage(ctx, account, resp)
+			writeStoredResponseCaptureError(c, ctx)
+			protocolErr := &StoredResponseLocalError{ErrBPSStoredResponseRoute}
+			if !reported {
+				return nil, protocolErr
+			}
+			return &OpenAIForwardResult{RequestID: resp.Header.Get("x-request-id"), ResponseID: storedResponseAttemptFrom(ctx).capture.PublicID(), Usage: observed, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel}, protocolErr
+		}
+		stripStoredResponsePrivateHeaders(resp.Header)
 
 		// Validated translated failures reuse the normal result metadata path,
 		// but never bind a failed response as a reusable success.
@@ -1216,16 +1264,25 @@ func (s *OpenAIGatewayService) Forward(
 				s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, safeBody, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 				s.recordOpenAIStreamUpstreamError(c, account, false, resp.Header.Get("x-request-id"), "http_error", safeBody, message)
 				writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-				MarkResponseCommitted(c)
-				c.Data(resp.StatusCode, "application/json", safeBody)
 				bpsFailureErr = fmt.Errorf("BPS translated response failed: %s", message)
+				// Observe #04 usage before capture; persistence failure must never
+				// erase a validated upstream measurement or release native output.
+				captured, captureErr := captureStoredResponseJSON(ctx, safeBody)
+				if captureErr != nil {
+					bpsFailureErr = captureErr
+					writeStoredResponseCaptureError(c, ctx)
+				} else {
+					bpsFailureBody = captured
+					MarkResponseCommitted(c)
+					c.Data(resp.StatusCode, "application/json", captured)
+				}
 			}
 		}
 		if resp.StatusCode >= 400 && bpsFailureBody == nil {
 			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			policyRejected := IsManagedFileGeneration(ctx) || isBPSRequestPolicyRejection(resp.StatusCode, resp.Header, respBody)
+			policyRejected := storedPlan != nil || IsManagedFileGeneration(ctx) || isBPSRequestPolicyRejection(resp.StatusCode, resp.Header, respBody)
 
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -1301,7 +1358,7 @@ func (s *OpenAIGatewayService) Forward(
 					continue
 				}
 			}
-			if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
+			if storedPlan == nil && s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -1366,11 +1423,20 @@ func (s *OpenAIGatewayService) Forward(
 			}
 			usage = &partial
 			responseID = gjson.GetBytes(bpsFailureBody, "response.id").String()
+			if attempt := storedResponseAttemptFrom(ctx); attempt != nil {
+				responseID = attempt.capture.PublicID()
+			}
 			responseErr = bpsFailureErr
 		} else if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
-				if signal, ok := asOpenAICompactFallbackSignal(err); ok && !IsManagedFileGeneration(ctx) {
+				if storedPlan != nil {
+					var local *StoredResponseLocalError
+					if !errors.As(err, &local) {
+						err = &StoredResponseLocalError{err}
+					}
+				}
+				if signal, ok := asOpenAICompactFallbackSignal(err); ok && storedPlan == nil && !IsManagedFileGeneration(ctx) {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 					); retry {
@@ -1410,7 +1476,7 @@ func (s *OpenAIGatewayService) Forward(
 					return s.handleErrorResponse(ctx, compactResp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 				}
 				var failoverErr *UpstreamFailoverError
-				if account.Type != AccountTypeAPIKey || streamResult == nil || !streamResult.usageReported || streamResult.imageCount > 0 || errors.As(err, &failoverErr) {
+				if account.Type != AccountTypeAPIKey || streamResult == nil || !streamResult.usageReported || streamResult.imageCount > 0 || (storedPlan == nil && errors.As(err, &failoverErr)) {
 					return nil, err
 				}
 				// The attempt is terminal and cannot fail over. Preserve only usage
@@ -1427,7 +1493,13 @@ func (s *OpenAIGatewayService) Forward(
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
-				if signal, ok := asOpenAICompactFallbackSignal(err); ok && !IsManagedFileGeneration(ctx) {
+				if storedPlan != nil {
+					var local *StoredResponseLocalError
+					if !errors.As(err, &local) {
+						err = &StoredResponseLocalError{err}
+					}
+				}
+				if signal, ok := asOpenAICompactFallbackSignal(err); ok && storedPlan == nil && !IsManagedFileGeneration(ctx) {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 					); retry {
@@ -1443,7 +1515,10 @@ func (s *OpenAIGatewayService) Forward(
 						continue
 					}
 				}
-				return nil, err
+				if storedPlan == nil || nonStreamResult == nil || nonStreamResult.usage == nil {
+					return nil, err
+				}
+				responseErr = err
 			}
 			usage = nonStreamResult.usage
 			responseID = strings.TrimSpace(nonStreamResult.responseID)
@@ -1738,6 +1813,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 侧信道：按真客户端节奏补一条只读 GET settings/user（openai_codex_side_calls.go）。
 	// 异步执行，读已定稿的身份头，不改本请求。
 	prepareManagedFileGenerationRequest(req)
+	stripStoredResponsePrivateHeaders(req.Header)
 	s.scheduleCodexSideCalls(c, account, req)
 	return req, nil
 }

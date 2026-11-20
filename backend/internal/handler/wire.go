@@ -138,8 +138,10 @@ func ProvideOpenAIGatewayHandler(
 	coordinator *securityaudit.Coordinator,
 	compositeResolver *service.CompositeRouteResolver,
 	managedFiles *service.ManagedFileResolver,
+	storedResponses *service.StoredResponseService,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
+	gatewayService.SetStoredResponseService(storedResponses)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.compositeResolver = compositeResolver
@@ -206,6 +208,7 @@ func ProvideHandlers(
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
 	fileHandler *FileHandler,
+	storedResponseHandler *StoredResponseHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
@@ -234,6 +237,7 @@ func ProvideHandlers(
 		AsyncImage:       asyncImageHandler,
 		BatchImage:       batchImageHandler,
 		Files:            fileHandler,
+		StoredResponses:  storedResponseHandler,
 	}
 }
 
@@ -262,6 +266,7 @@ var ProviderSet = wire.NewSet(
 	NewAsyncImageHandler,
 	ProvideBatchImageHandler,
 	NewFileHandler,
+	NewStoredResponseHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

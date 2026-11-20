@@ -1086,8 +1086,9 @@ type GatewayConfig struct {
 	// DownstreamWriteTimeoutSeconds bounds each HTTP write/flush, not the lifetime of a stream.
 	DownstreamWriteTimeoutSeconds int `mapstructure:"downstream_write_timeout_seconds"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
-	TextMaxBodySize int64       `mapstructure:"text_max_body_size"`
-	Files           FilesConfig `mapstructure:"files"`
+	TextMaxBodySize int64                 `mapstructure:"text_max_body_size"`
+	Files           FilesConfig           `mapstructure:"files"`
+	StoredResponses StoredResponsesConfig `mapstructure:"stored_responses"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
 	UpstreamResponseReadMaxBytes int64 `mapstructure:"upstream_response_read_max_bytes"`
 	// 上游模型列表响应体读取上限（字节）
@@ -2673,6 +2674,15 @@ func setDefaults() {
 	viper.SetDefault("gateway.files.cleanup_lease_seconds", filesDefaults.CleanupLeaseSeconds)
 	viper.SetDefault("gateway.files.read_drain_seconds", filesDefaults.ReadDrainSeconds)
 	viper.SetDefault("gateway.files.default_retention_seconds", filesDefaults.DefaultRetentionSeconds)
+	storedResponsesDefaults := DefaultStoredResponsesConfig()
+	viper.SetDefault("gateway.stored_responses.enabled", storedResponsesDefaults.Enabled)
+	viper.SetDefault("gateway.stored_responses.retention_days", storedResponsesDefaults.RetentionDays)
+	viper.SetDefault("gateway.stored_responses.lease_seconds", storedResponsesDefaults.LeaseSeconds)
+	viper.SetDefault("gateway.stored_responses.max_response_bytes", storedResponsesDefaults.MaxResponseBytes)
+	viper.SetDefault("gateway.stored_responses.user_max_rows", storedResponsesDefaults.UserMaxRows)
+	viper.SetDefault("gateway.stored_responses.user_max_bytes", storedResponsesDefaults.UserMaxBytes)
+	viper.SetDefault("gateway.stored_responses.global_max_rows", storedResponsesDefaults.GlobalMaxRows)
+	viper.SetDefault("gateway.stored_responses.global_max_bytes", storedResponsesDefaults.GlobalMaxBytes)
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.models_list_read_max_bytes", DefaultModelsListReadMaxBytes)
 	viper.SetDefault("gateway.openai_recording.directory", "")
@@ -3524,6 +3534,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gateway.text_max_body_size must be positive and no greater than gateway.max_body_size")
 	}
 	if err := c.Gateway.Files.Validate(); err != nil {
+		return err
+	}
+	if err := c.Gateway.StoredResponses.Validate(); err != nil {
 		return err
 	}
 	if c.Gateway.UpstreamResponseReadMaxBytes <= 0 {

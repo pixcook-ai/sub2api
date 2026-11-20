@@ -143,6 +143,7 @@ func provideCleanup(
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
 	files *service.FileService,
+	storedResponsesWorker *service.StoredResponsesWorker,
 ) func() {
 	// 仅应用生命周期启动持久反馈；构造服务本身不启动扫描任务。
 	if openAIGateway != nil {
@@ -151,6 +152,9 @@ func provideCleanup(
 	}
 	if files != nil {
 		files.StartLifecycle()
+	}
+	if storedResponsesWorker != nil {
+		storedResponsesWorker.Start()
 	}
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -163,6 +167,12 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
+			{"StoredResponsesWorker", func() error {
+				if storedResponsesWorker != nil {
+					storedResponsesWorker.Stop()
+				}
+				return nil
+			}},
 			{"FilesLifecycle", func() error {
 				if files != nil {
 					files.StopLifecycle()

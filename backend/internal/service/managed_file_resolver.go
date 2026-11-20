@@ -243,8 +243,14 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 	}
 	resolveCtx, cancel := context.WithTimeout(ctx, managedFileReservationLease)
 	defer cancel()
+	if err := checkManagedFilePreparationAuthorization(resolveCtx); err != nil {
+		return nil, err
+	}
 	description, err := backend.Describe(resolveCtx)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkManagedFilePreparationAuthorization(resolveCtx); err != nil {
 		return nil, err
 	}
 	token, err := fileToken()
@@ -379,12 +385,29 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 			budgets[position.Input] = b
 		}
 	}
-	admission, err := backend.Admit(resolveCtx, manifest, readers)
+	if err := checkManagedFilePreparationAuthorization(resolveCtx); err != nil {
+		return nil, err
+	}
+	var admission managedfiles.AdmitResult
+	if description.Capabilities.MetadataRecovery {
+		round := new(ManagedFileRecoveryRound)
+		recovered, recoveryErr := round.Admit(resolveCtx, ManagedFileRecoveryAdmissionInput{
+			Plan: plan, Backend: backend, Manifest: manifest, Reservation: reservation, Limits: limits,
+			Authorize: checkManagedFilePreparationAuthorization, Open: managedRecoveryPlanOpener(plan, reservation),
+		})
+		if recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		manifest, reservation, admission = recovered.Manifest, recovered.Reservation, recovered.Admission
+		bindings = managedRecoveryBindings(reservation)
+	} else {
+		admission, err = backend.Admit(resolveCtx, manifest, readers)
+	}
 	if err != nil {
 		return nil, err
 	}
 	expires := time.Unix(admission.ExpiresAt, 0)
-	results := make([]managedfiles.EnsureResult, 0, len(readers))
+	results := make([]managedfiles.EnsureResult, 0, len(manifest.Files))
 	ready := admission.Ready
 	for _, file := range manifest.Files {
 		if file.Mode != "upload" {
@@ -397,6 +420,9 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 			return nil, ErrManagedFileNotReady
 		}
 		binding, permanent := bindings[file.FileRef]
+		if err := checkManagedFilePreparationAuthorization(resolveCtx); err != nil {
+			return nil, err
+		}
 		operationID := inlineBindings[file.FileRef].Operation.ID
 		if permanent {
 			operationID = binding.Operation.ID
@@ -405,6 +431,12 @@ func (s *ManagedFileResolver) Resolve(ctx context.Context, plan *ManagedFilePlan
 			err = plan.inlineLedger.StartInline(resolveCtx, plan.inlineReservation, file.FileRef)
 		}
 		if err != nil {
+			return nil, err
+		}
+		// Durable Start can wait on database locks. Revocation during that wait
+		// must still prevent the external upload; retain the started fact.
+		if err := checkManagedFilePreparationAuthorization(resolveCtx); err != nil {
+			s.markPlanFileUncertain(plan, file.FileRef, permanent)
 			return nil, err
 		}
 		result, err := backend.EnsureUploaded(resolveCtx, managedfiles.EnsureRequest{Contract: managedfiles.Contract, Expected: backendConfig.Expected, AdmissionID: admission.AdmissionID, FileRef: file.FileRef, OperationID: operationID}, file)
@@ -487,15 +519,21 @@ func managedInlineTemplate(plan *ManagedFilePlan, body []byte) ([]byte, error) {
 }
 
 func (s *ManagedFileResolver) authorizeManagedPlan(ctx context.Context, plan *ManagedFilePlan) error {
+	if err := checkManagedFilePreparationAuthorization(ctx); err != nil {
+		return err
+	}
 	if plan.reservation != nil {
 		if err := s.ledger.AuthorizeGeneration(ctx, plan.reservation); err != nil {
 			return err
 		}
 	}
 	if plan.inlineReservation != nil {
-		return plan.inlineLedger.AuthorizeInlineGeneration(ctx, plan.inlineReservation)
+		if err := plan.inlineLedger.AuthorizeInlineGeneration(ctx, plan.inlineReservation); err != nil {
+			return err
+		}
 	}
-	return nil
+	// Ledger checks may also wait. The final wire send uses current authority.
+	return checkManagedFilePreparationAuthorization(ctx)
 }
 
 func (s *ManagedFileResolver) markPlanFileUncertain(plan *ManagedFilePlan, ref string, permanent bool) {

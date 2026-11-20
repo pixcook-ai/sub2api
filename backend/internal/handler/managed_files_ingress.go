@@ -19,7 +19,7 @@ const managedFilesUnsupportedMessage = "Managed files require HTTP Responses wit
 // arguments stay opaque. Preparation holds local read leases until the handler
 // has finished forwarding and draining usage.
 func (h *OpenAIGatewayHandler) ManagedFilesIngress(c *gin.Context) {
-	for _, header := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader} {
+	for _, header := range []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader, managedfiles.RecoveryFeatureHeader} {
 		c.Request.Header.Del(header)
 	}
 	if !h.managedFilesEnabled() || c.Request.Method != http.MethodPost {

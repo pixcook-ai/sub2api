@@ -23,6 +23,7 @@ import (
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/managedfiles"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -32,6 +33,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -392,6 +394,15 @@ func NewOpenAIGatewayHandler(
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
+	// Private storage proofs are reconstructed from server-owned state.
+	for key := range c.Request.Header {
+		if strings.HasPrefix(strings.ToLower(key), "x-bps-responses-") {
+			delete(c.Request.Header, key)
+		}
+	}
+	for _, key := range []string{managedfiles.ServiceKeyHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader} {
+		c.Request.Header.Del(key)
+	}
 	defer service.FinishGatewayPoolWaitKeepalive(c)
 	// 局部兜底：确保该 handler 内部任何 panic 都不会击穿到进程级。
 	streamStarted := false
@@ -690,6 +701,54 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(pricingCtx)
 
+	// Fix storage semantics from the persistent server pool. A client store
+	// flag never chooses a subpool.
+	storedRouteActive := h.cfg != nil && h.cfg.Gateway.StoredResponses.Enabled &&
+		requestPlatform == service.PlatformOpenAI && !legacyCompact && !nativeV2 && isBareOpenAIResponsesPath(c)
+	var storedRoute service.BPSStoredResponseRoute
+	if storedRouteActive {
+		storedRoute, err = h.gatewayService.ResolveBPSStoredResponseRoute(c.Request.Context(), apiKey.GroupID, forwardModel, requestPlatform)
+		if err != nil {
+			h.handleStoredResponseDispatchError(c, service.ErrBPSStoredResponseRoute, streamStarted)
+			return
+		}
+		if storedRoute.Local {
+			requiredCapability = service.OpenAIEndpointCapabilityBPSLocalResponses
+			// Explicit false retains the established tools/files path. Default
+			// and true requests enter the pure-text local history contract.
+			if store := gjson.GetBytes(sessionHashBody, "store"); !store.Exists() || store.Type != gjson.False {
+				if apiKey.GroupID == nil {
+					h.handleStoredResponseDispatchError(c, service.ErrStoredResponsesDisabled, streamStarted)
+					return
+				}
+				// Normalization keeps input, parameters and two request objects.
+				// Charge their worst-case JSON string escaping before allocation.
+				planCtx, releasePlanMemory := pkghttputil.WithRequestBodyMemoryScope(c.Request.Context())
+				defer releasePlanMemory()
+				if memoryErr := pkghttputil.ReserveRequestBodyMemory(planCtx, int64(len(sessionHashBody))*32+(64<<10)); memoryErr != nil {
+					h.handleForwardRequestBodyMemoryOverload(c, memoryErr, streamStarted)
+					return
+				}
+				c.Request = c.Request.WithContext(planCtx)
+				plan, planErr := service.NewStoredResponsePlan(service.StoredResponseOwner{UserID: subject.UserID, APIKeyID: apiKey.ID, GroupID: *apiKey.GroupID}, sessionHashBody)
+				if planErr != nil {
+					h.handleStoredResponseDispatchError(c, planErr, streamStarted)
+					return
+				}
+				if service.ManagedFilePlanFromContext(c.Request.Context()) != nil {
+					h.handleStoredResponseDispatchError(c, service.ErrStoredResponseUnsupported, streamStarted)
+					return
+				}
+				forwardBody, err = sjson.SetBytes(forwardBody, "store", false)
+				if err != nil {
+					h.handleStoredResponseDispatchError(c, service.ErrStoredResponseInvalid, streamStarted)
+					return
+				}
+				c.Request = c.Request.WithContext(service.WithStoredResponsePlan(c.Request.Context(), plan))
+			}
+		}
+	}
+
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
 		// be drained after a disconnect. Re-check the client context before every
@@ -778,6 +837,18 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			zap.Float64("load_skew", scheduleDecision.LoadSkew),
 		)
 		account := selection.Account
+		if storedRouteActive {
+			current, checkErr := h.gatewayService.RecheckBPSStoredResponseRoute(c.Request.Context(), apiKey.GroupID, account, forwardModel, storedRoute)
+			if checkErr != nil {
+				if selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+					selection.ReleaseFunc = nil
+				}
+				h.handleStoredResponseDispatchError(c, service.ErrBPSStoredResponseRoute, streamStarted)
+				return
+			}
+			account, selection.Account = current, current
+		}
 		if reasoningPolicyErr != nil && !account.IsCPR() {
 			if selection.ReleaseFunc != nil {
 				selection.ReleaseFunc()
@@ -829,6 +900,17 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		if slotResult != openAISlotAcquireOK {
 			return
+		}
+		if storedRouteActive {
+			current, checkErr := h.gatewayService.RecheckBPSStoredResponseRoute(c.Request.Context(), apiKey.GroupID, account, forwardModel, storedRoute)
+			if checkErr != nil {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				h.handleStoredResponseDispatchError(c, service.ErrBPSStoredResponseRoute, streamStarted)
+				return
+			}
+			account, selection.Account = current, current
 		}
 
 		// Forward request
@@ -920,6 +1002,16 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			var localStorageErr *service.StoredResponseLocalError
+			if errors.As(err, &localStorageErr) || errors.Is(err, service.ErrBPSStoredResponseRoute) {
+				// Local admission and persistence failures never affect upstream
+				// health or start a second inference attempt.
+				submitResponsesUsage(result)
+				if !service.IsResponseCommitted(c) && !openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err) {
+					h.handleStoredResponseDispatchError(c, err, streamStarted)
+				}
+				return
+			}
 			if result != nil && result.ClientDisconnect {
 				reqLog.Info("openai.client_disconnected",
 					zap.Int64("account_id", account.ID),
@@ -4247,7 +4339,7 @@ func openAIForwardMayFailover(c *gin.Context, writerSizeBeforeForward int, failo
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	if c.Request != nil && service.ManagedFilePlanFromContext(c.Request.Context()) != nil {
+	if c.Request != nil && (service.ManagedFilePlanFromContext(c.Request.Context()) != nil || service.StoredResponsePlanFromContext(c.Request.Context()) != nil) {
 		return false
 	}
 	if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {

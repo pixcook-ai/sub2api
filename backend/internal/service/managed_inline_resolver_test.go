@@ -54,7 +54,7 @@ func TestManagedInlineResolverRejectsFinalPayloadMutationBeforeRemoteAccess(t *t
 	defer plan.Close()
 	account := managedInlineTestAccount(server.URL)
 	changed := []byte(strings.Replace(string(body), "aGVsbG8=", "d29ybGQ=", 1))
-	resolved, err := resolver.Resolve(context.Background(), plan, account, changed)
+	resolved, err := resolver.Resolve(managedResolverAuthorizedContext(), plan, account, changed)
 	require.ErrorIs(t, err, ErrManagedFileUnsupportedInput)
 	require.Nil(t, resolved)
 	require.Zero(t, calls.Load())
@@ -265,7 +265,7 @@ func TestManagedInlineResolverUploadsWithDurableRequestFence(t *testing.T) {
 			plan, err := resolver.Prepare(context.Background(), FileOwner{UserID: 1, GroupID: 2, APIKeyID: 3}, body)
 			require.NoError(t, err)
 			defer plan.Close()
-			resolved, err := resolver.Resolve(context.Background(), plan, managedInlineTestAccount(server.URL), body)
+			resolved, err := resolver.Resolve(managedResolverAuthorizedContext(), plan, managedInlineTestAccount(server.URL), body)
 			if tc.uploadFailure || tc.lateConfirmation || tc.authorizationFailure {
 				require.Error(t, err)
 				require.Nil(t, resolved)
@@ -289,7 +289,7 @@ func TestManagedInlineResolverUploadsWithDurableRequestFence(t *testing.T) {
 					wantInline = 2
 				}
 				require.Len(t, ledger.inlineCompletes, wantInline)
-				require.NoError(t, resolved.Authorize(context.Background()))
+				require.NoError(t, resolved.Authorize(managedResolverAuthorizedContext()))
 				require.Positive(t, ledger.inlineAuthorizations)
 				if tc.publicMode == "succeeded" {
 					require.Empty(t, ledger.started)
@@ -319,7 +319,7 @@ func TestManagedInlineResolverUploadsWithDurableRequestFence(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, entries)
 			if resolved != nil {
-				require.Error(t, resolved.Authorize(context.Background()))
+				require.Error(t, resolved.Authorize(managedResolverAuthorizedContext()))
 			}
 		})
 	}
@@ -364,7 +364,7 @@ func TestManagedInlineResolverRejectsFinalPersistentStoreBeforeRemoteActivity(t 
 	require.NoError(t, err)
 	defer plan.Close()
 	changed := []byte(strings.Replace(string(body), `"store":false`, `"store":true`, 1))
-	resolved, err := resolver.Resolve(context.Background(), plan, managedInlineTestAccount(server.URL), changed)
+	resolved, err := resolver.Resolve(managedResolverAuthorizedContext(), plan, managedInlineTestAccount(server.URL), changed)
 	require.ErrorIs(t, err, ErrManagedFileUnsupportedInput)
 	require.Nil(t, resolved)
 	require.Zero(t, calls.Load())

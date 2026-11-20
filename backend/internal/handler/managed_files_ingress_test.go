@@ -28,7 +28,7 @@ func TestManagedFilesIngressStripsPrivateHeadersBeforeDispatch(t *testing.T) {
 				cfg := &config.Config{}
 				cfg.Gateway.Files.Enabled = enabled
 				h := &OpenAIGatewayHandler{cfg: cfg}
-				headers := []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader}
+				headers := []string{managedfiles.ServiceKeyHeader, managedfiles.AdmissionHeader, managedfiles.OwnerRefHeader, managedfiles.GroupRefHeader, managedfiles.BindingHeader, managedfiles.RecoveryFeatureHeader}
 				r := gin.New()
 				r.Handle(method, "/v1/responses", h.ManagedFilesIngress, func(c *gin.Context) {
 					for _, header := range headers {

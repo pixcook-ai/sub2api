@@ -485,6 +485,7 @@ type OpenAIGatewayService struct {
 	openaiTiboContext      context.Context
 	openaiTiboDone         chan struct{}
 	openaiTiboStopped      bool
+	storedResponses        *StoredResponseService
 	managedFiles           *ManagedFileResolver
 	accountRepo            AccountRepository
 	usageLogRepo           UsageLogRepository

@@ -70,6 +70,7 @@ type Handlers struct {
 	AsyncImage       *AsyncImageHandler
 	BatchImage       *BatchImageHandler
 	Files            *FileHandler
+	StoredResponses  *StoredResponseHandler
 }
 
 // BuildInfo contains build-time information

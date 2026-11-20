@@ -30,6 +30,7 @@ func RegisterGatewayRoutes(
 	cfg *config.Config,
 ) {
 	RegisterFileRoutes(r, h.Files, apiKeyAuth)
+	RegisterStoredResponseRoutes(r, h.StoredResponses, apiKeyAuth)
 	managedFilesIngress := func(c *gin.Context) {
 		if h.OpenAIGateway == nil {
 			c.Next()

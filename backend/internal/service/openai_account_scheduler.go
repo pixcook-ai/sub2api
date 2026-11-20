@@ -2264,6 +2264,9 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapability(
 	if len(platformOverride) > 0 {
 		platform = platformOverride[0]
 	}
+	if requiredCapability == OpenAIEndpointCapabilityBPSLocalResponses {
+		ctx = context.WithValue(ctx, storedResponseCandidatePassKey{}, true)
+	}
 	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 }
 
