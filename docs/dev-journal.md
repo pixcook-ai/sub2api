@@ -1,5 +1,9 @@
 # Development journal
 
+## 2026-11-20 — Managed generation and failure-contract composition
+
+Integrated main 7cc1b1bb2 contains the reviewed managed files/lifecycle, failure-v1, cooldown, seed/launcher and stored-response modules. Added a focused actual Forward regression combining trusted managed-generation context with selected failure-v1 JSON429 and SSE200 failed terminals. It asserts the failed response ID, observed9/4 usage, private-header override, one authorization and one upstream send, plus no second send on another Forward invocation. Independent initial review caught an invalid ordinary account fixture; the test now reuses the existing explicit managed-account fixture without changing production validation. Session79073 passed both modes, service1.832s; raw /tmp/bps-root-managed-failure-20261120.jsonl. This test is a development composition check, not actual admission, PostgreSQL settlement, complete SSE lifecycle or official SDK acceptance. Fresh immutable-source SDK and actual ledger readback remain pending; no real BPS, account enabling, push or deployment.
+
 ## 2026-11-20 — BPS managed file first-reference integration
 
 Issue `pixcook-ai/bps-gateway` #10, plan 07. Existing missing outbound-identity and account-extra conventions remain absent; the coordinating agent's recorded authorization continues to apply. Existing identity behavior is preserved, and explicit BPS file configuration is stored in Credentials. Contract `bps-files/1` and strict JSON fixture are copied from the gateway contract package; ownership/current-group references are resolved by the main Files namespace before external traffic.
