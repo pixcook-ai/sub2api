@@ -1,0 +1,1323 @@
+{
+  "contract_version": 1,
+  "source": "isolated-local-full-main-chain",
+  "main_commit": "840446e3c1849f0c464ad9d31e93f65e48c521fa",
+  "gateway_commit": "85af8ec1b052aa648108578f22ae89ae6779116a",
+  "main_source_clean": true,
+  "gateway_source_clean": true,
+  "source_provenance_verified": true,
+  "binary_source": "launcher-built",
+  "main_binary_sha256": "4bab0a5b4387bf5f41124bb61e076576a76c5534f2b1ee5045ad9b59fef83b90",
+  "gateway_binary_sha256": "471dfa32e8f87907e9eb7ab0a27fe1976d3f6e38836e6d5615995da91d49f594",
+  "status": "failed",
+  "supported_baseline": "passed",
+  "all_selected": "failed",
+  "ticket_gates": {
+    "01_request_policy": {
+      "status": "passed",
+      "missing": [],
+      "failed": [],
+      "main_chain_gate": "observed"
+    },
+    "03_tool_mode_v1": {
+      "status": "passed",
+      "missing": [],
+      "failed": [],
+      "main_chain_gate": "observed"
+    },
+    "04_sse": {
+      "status": "passed",
+      "missing": [],
+      "failed": [],
+      "main_chain_gate": "observed"
+    },
+    "06_files_create_read": {
+      "status": "passed",
+      "missing": [],
+      "failed": [],
+      "main_chain_gate": "observed"
+    },
+    "07_managed_files_public_contract": {
+      "status": "passed",
+      "missing": [],
+      "failed": [],
+      "main_chain_gate": "observed"
+    },
+    "08_files_list_expiry_parameters": {
+      "status": "passed",
+      "missing": [],
+      "failed": [],
+      "main_chain_gate": "observed"
+    }
+  },
+  "passed": 84,
+  "failed": 2,
+  "report_sha256": "0f2deeaecdd7dd0d6b1f0a39050430379fa48b169c3350c0fe4f2e7ef5766b43",
+  "ledger_sha256": "496d53009ca61321d620592e8dde617192802cb438fb5d93fd836fbc07f9a274",
+  "sdk_versions": {
+    "python": {
+      "sdk_version": "3.55.1",
+      "runtime": "3.14.2"
+    },
+    "javascript": {
+      "sdk_version": "7.60.0",
+      "runtime": "v24.22.2"
+    }
+  },
+  "cases": [
+    {
+      "sdk": "python",
+      "scenario": "json",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "unauthorized-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 401,
+      "error_class": "AuthenticationError",
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "unauthorized-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 401,
+      "error_class": "AuthenticationError",
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "upstream429-no-retry",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 429,
+      "error_class": "RateLimitError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "upstream429-default-retry",
+      "status": "passed",
+      "http_attempts": 3,
+      "status_code": 429,
+      "error_class": "RateLimitError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "truncated",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-strict-default",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 400,
+      "error_class": "BadRequestError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "policy-rejections",
+      "status": "passed",
+      "http_attempts": 4,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "policy-catalog",
+      "status": "passed",
+      "http_attempts": 8,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 7,
+        "accepted_generations": 7,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "files-create-read",
+      "status": "passed",
+      "http_attempts": 4,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "files-list",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "files-delete",
+      "status": "failed",
+      "http_attempts": 2,
+      "status_code": 404,
+      "error_class": "NotFoundError",
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "failed-usage-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "failed-usage-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 429,
+      "error_class": "RateLimitError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "truncated-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 502,
+      "error_class": "InternalServerError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "incomplete-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "incomplete-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "annotations-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "annotations-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "managed-file-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "managed-file-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "managed-file-large-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "managed-file-large-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "managed-file-owner-deny",
+      "status": "passed",
+      "http_attempts": 5,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "managed-file-othergroup-deny",
+      "status": "passed",
+      "http_attempts": 5,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "managed-file-private-header-forgery",
+      "status": "passed",
+      "http_attempts": 5,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "files-list-pages",
+      "status": "passed",
+      "http_attempts": 10,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "files-cursor-owner",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "files-expiry-contract",
+      "status": "passed",
+      "http_attempts": 4,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-best-effort-function-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-best-effort-function-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-best-effort-code-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-best-effort-code-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-best-effort-cmd-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-best-effort-cmd-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-roundtrip-null-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-roundtrip-null-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "custom-roundtrip-null-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "custom-roundtrip-null-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "python",
+      "scenario": "tool-strict-boundary",
+      "status": "passed",
+      "http_attempts": 8,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "json",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "unauthorized-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 401,
+      "error_class": "AuthenticationError",
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "unauthorized-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 401,
+      "error_class": "AuthenticationError",
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "upstream429-no-retry",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 429,
+      "error_class": "RateLimitError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "upstream429-default-retry",
+      "status": "passed",
+      "http_attempts": 3,
+      "status_code": 429,
+      "error_class": "RateLimitError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "truncated",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-strict-default",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 400,
+      "error_class": "BadRequestError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "policy-rejections",
+      "status": "passed",
+      "http_attempts": 4,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "policy-catalog",
+      "status": "passed",
+      "http_attempts": 8,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 7,
+        "accepted_generations": 7,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "files-create-read",
+      "status": "passed",
+      "http_attempts": 5,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "files-list",
+      "status": "passed",
+      "http_attempts": 4,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "files-delete",
+      "status": "failed",
+      "http_attempts": 3,
+      "status_code": 404,
+      "error_class": "NotFoundError",
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "failed-usage-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "failed-usage-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 429,
+      "error_class": "RateLimitError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "truncated-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "status_code": 502,
+      "error_class": "InternalServerError",
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "incomplete-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "incomplete-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "annotations-sse",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "annotations-json",
+      "status": "passed",
+      "http_attempts": 1,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "managed-file-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "managed-file-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "managed-file-large-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "managed-file-large-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "managed-file-owner-deny",
+      "status": "passed",
+      "http_attempts": 5,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "managed-file-othergroup-deny",
+      "status": "passed",
+      "http_attempts": 5,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "managed-file-private-header-forgery",
+      "status": "passed",
+      "http_attempts": 5,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 1,
+        "accepted_generations": 1,
+        "uploads": 1,
+        "upload_attempts": 1,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "files-list-pages",
+      "status": "passed",
+      "http_attempts": 10,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "files-cursor-owner",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "files-expiry-contract",
+      "status": "passed",
+      "http_attempts": 4,
+      "isolated_scenario_key": true,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-best-effort-function-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-best-effort-function-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-best-effort-code-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-best-effort-code-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-best-effort-cmd-json",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-best-effort-cmd-sse",
+      "status": "passed",
+      "http_attempts": 2,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 2,
+        "accepted_generations": 2,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 1
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-roundtrip-null-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-roundtrip-null-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "custom-roundtrip-null-json",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "custom-roundtrip-null-sse",
+      "status": "passed",
+      "http_attempts": 3,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 3,
+        "accepted_generations": 3,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 2
+      }
+    },
+    {
+      "sdk": "javascript",
+      "scenario": "tool-strict-boundary",
+      "status": "passed",
+      "http_attempts": 8,
+      "isolated_scenario_key": false,
+      "native_delta": {
+        "http_attempts": 0,
+        "accepted_generations": 0,
+        "uploads": 0,
+        "upload_attempts": 0,
+        "tool_replays": 0
+      }
+    }
+  ],
+  "pg_readback": {
+    "status": "passed",
+    "managed_positive_checks": 8,
+    "failed_or_incomplete_usage_checks": 10,
+    "summary": {
+      "unfinished_started_or_uncertain": 0,
+      "active_leases": 0,
+      "usage_rows": 112,
+      "total_actual_cost": 0.02824,
+      "user_balance": 99.97176
+    }
+  },
+  "limitations": [
+    "Files DELETE returns 404 for both SDKs at this source pair; full run failed.",
+    "PG readback confirms eight managed positive cases and ten failed/incomplete usage cases only.",
+    "Native BPS inference, document understanding, remote content/delete, search and generated artifacts untested.",
+    "Stored responses, metadata recovery and mixed inline files outside this frozen source pair."
+  ]
+}
