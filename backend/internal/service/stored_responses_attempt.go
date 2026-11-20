@@ -16,10 +16,11 @@ import (
 
 type storedResponseCaptureKey struct{}
 type storedResponseAttempt struct {
-	capture  *StoredResponseCapture
-	stop     func() error
-	stopOnce sync.Once
-	stopErr  error
+	capture        *StoredResponseCapture
+	stop           func() error
+	stopOnce       sync.Once
+	stopErr        error
+	failureWritten bool
 }
 
 func (a *storedResponseAttempt) stopLease() error {
@@ -225,9 +226,15 @@ func writeStoredResponseCaptureError(c *gin.Context, ctx context.Context) {
 	if c == nil || c.Writer == nil {
 		return
 	}
+	attempt := storedResponseAttemptFrom(ctx)
+	if attempt != nil {
+		if attempt.failureWritten {
+			return
+		}
+		attempt.failureWritten = true
+	}
 	MarkResponseCommitted(c)
 	if c.Writer.Written() {
-		attempt := storedResponseAttemptFrom(ctx)
 		if attempt == nil {
 			return
 		}

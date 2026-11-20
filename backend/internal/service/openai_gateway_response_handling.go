@@ -306,12 +306,23 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	pendingSSEEventType := ""
+	storedSkipBlank := false
 	eventInProgress := false
 	eventStartsClientOutput := false
 	eventStartsTTFTOutput := false
 	eventShouldFlush := false
+	failStoredStream := func(cause error) error {
+		_ = resp.Body.Close()
+		leaseErr := storedAttempt.stopLease()
+		writeStoredResponseCaptureError(c, ctx)
+		return &StoredResponseLocalError{errors.Join(cause, leaseErr)}
+	}
 	handlePendingWriteError := func(err error) {
 		if firstOutputStage != nil && !firstOutputStage.closed {
+			if storedAttempt != nil {
+				streamEarlyErr = failStoredStream(err)
+				return
+			}
 			message := "OpenAI first-output staging failed"
 			if errors.Is(err, errOpenAIFirstOutputStageLimit) {
 				message = "OpenAI first-output staging limit exceeded"
@@ -470,6 +481,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if scanErr == nil {
 			return nil, nil, false
 		}
+		if storedAttempt != nil && !sawTerminalEvent {
+			return resultWithUsage(), failStoredStream(scanErr), true
+		}
 		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && !firstOutputProgressObserved {
 			logger.LegacyPrintf("service.openai_gateway", "SSE token exceeded guarded first-output limit: account=%d limit=%d error=%v", account.ID, openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance, scanErr)
 			failoverErr := s.newOpenAIStreamFailoverError(
@@ -555,6 +569,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 	processSSELine := func(line string, queueDrained bool) {
 		if streamEarlyErr != nil {
+			return
+		}
+		if storedAttempt != nil && line == "" && storedSkipBlank {
+			storedSkipBlank = false
+			pendingSSEEventType = ""
 			return
 		}
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
@@ -861,6 +880,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if normalizedBareError && storedAttempt == nil {
 				line = "event: response.failed\n" + line
 			}
+			if storedAttempt != nil {
+				// Capture has committed the complete JSON document. Publish its
+				// whole frame now so an upstream-delayed blank line cannot turn
+				// an already finalized terminal into a timeout failure.
+				line += "\n"
+			}
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
@@ -886,6 +911,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			firstAnswer.observe(data, eventType, startTime)
 			parseUsage(dataBytes, eventType)
+			if storedAttempt != nil && streamEarlyErr == nil {
+				storedSkipBlank = true
+				completeGuardedEvent(queueDrained)
+				if terminalFailurePending {
+					terminalFailurePending = false
+					failureDelivered = true
+				}
+			}
 			return
 		}
 		if storedAttempt != nil && line != "" {
@@ -1099,6 +1132,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				intervalTimer.Reset(remaining)
 				continue
 			}
+			if storedAttempt != nil {
+				return resultWithUsage(), failStoredStream(errors.New("stored response stream idle timeout"))
+			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed {
 				_ = resp.Body.Close()
 				return finalizeStream()
@@ -1142,6 +1178,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if firstOutputProgressObserved {
 				stopFirstOutputTimer()
 				continue
+			}
+			if storedAttempt != nil {
+				return resultWithUsage(), failStoredStream(errors.New("stored response first output timeout"))
 			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && len(events) == 0 {
 				_ = resp.Body.Close()

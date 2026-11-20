@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -83,6 +84,10 @@ func TestStoredResponseForwardJSONMatchesRetrievedPublicResponse(t *testing.T) {
 }
 
 func storedForwardFixture(t *testing.T, fail bool) (*StoredResponseService, *StoredResponseCapture, context.Context, *gin.Context, *httptest.ResponseRecorder) {
+	return storedForwardFixtureRequest(t, fail, []byte(`{"model":"client-model","input":"hello","instructions":"client instructions"}`))
+}
+
+func storedForwardFixtureRequest(t *testing.T, fail bool, body []byte) (*StoredResponseService, *StoredResponseCapture, context.Context, *gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	cfg := DefaultStoredResponseConfig()
 	cfg.Enabled = true
@@ -94,7 +99,7 @@ func storedForwardFixture(t *testing.T, fail bool) (*StoredResponseService, *Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := NormalizeStoredResponseRequest([]byte(`{"model":"client-model","input":"hello","instructions":"client instructions"}`))
+	req, err := NormalizeStoredResponseRequest(body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,5 +358,78 @@ func TestStoredResponseForwardBufferedReadErrorRetainsProgress(t *testing.T) {
 	}
 	if !strings.Contains(string(saved.PublicResponse), "partial") || gjson.GetBytes(saved.PublicResponse, "usage.output_tokens").Int() != 4 {
 		t.Fatalf("read failure lost partial: %s", saved.PublicResponse)
+	}
+}
+
+func TestStoredResponseForwardStreamTimeoutAndStageFailureStayLocal(t *testing.T) {
+	for _, mode := range []string{"first_output", "idle", "stage_limit"} {
+		t.Run(mode, func(t *testing.T) {
+			request := []byte("{\"model\":\"client-model\",\"input\":\"hello\"}")
+			if mode == "stage_limit" {
+				request, _ = json.Marshal(map[string]any{"model": "client-model", "input": "hello", "instructions": strings.Repeat("i", 64<<10)})
+			}
+			_, capture, ctx, c, recorder := storedForwardFixtureRequest(t, false, request)
+			svc := newOpenAIRejectedFieldTestService(nil)
+			svc.cfg = &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
+			frame := "event: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"response\":{\"object\":\"response\",\"status\":\"in_progress\",\"output\":[],\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}}\n\n"
+			var body io.ReadCloser
+			var closed chan struct{}
+			if mode == "stage_limit" {
+				body = io.NopCloser(strings.NewReader(strings.Repeat(frame, 140)))
+			} else {
+				pr, pw := io.Pipe()
+				closed = make(chan struct{})
+				body = &firstOutputCloseTrackingBody{ReadCloser: pr, closed: closed}
+				t.Cleanup(func() { _ = pw.Close(); _ = body.Close() })
+				if mode == "first_output" {
+					svc.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 1
+				} else {
+					svc.cfg.Gateway.StreamDataIntervalTimeout = 1
+					frame += "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"item_id\":\"msg_1\",\"delta\":\"hello\"}\n\n"
+				}
+				go func() { _, _ = pw.Write([]byte(frame)); <-closed; _ = pw.Close() }()
+			}
+			resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}
+			result, err := svc.handleStreamingResponse(ctx, resp, c, newOpenAIRejectedFieldTestAccount(), time.Now(), "client-model", "native-model")
+			var local *StoredResponseLocalError
+			var failover *UpstreamFailoverError
+			if !errors.As(err, &local) || errors.As(err, &failover) || result == nil || result.responseID != capture.PublicID() || result.usage.InputTokens != 9 || result.usage.OutputTokens != 4 {
+				t.Fatalf("activated stream failure became replayable/lost usage: %#v %v", result, err)
+			}
+			if mode == "idle" {
+				if !strings.Contains(recorder.Body.String(), "response.failed") || !strings.Contains(recorder.Body.String(), capture.PublicID()) {
+					t.Fatalf("visible failure lost identity: %s", recorder.Body.String())
+				}
+			} else if recorder.Code != 503 {
+				t.Fatalf("uncommitted failure status=%d", recorder.Code)
+			}
+			if closed != nil {
+				select {
+				case <-closed:
+				default:
+					t.Fatal("upstream body left open")
+				}
+			}
+		})
+	}
+}
+
+func TestStoredResponseForwardCommittedTerminalDoesNotWaitForBlankLine(t *testing.T) {
+	_, capture, ctx, c, recorder := storedForwardFixture(t, false)
+	svc := newOpenAIRejectedFieldTestService(nil)
+	svc.cfg = &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize, OpenAIFirstOutputTimeoutSeconds: 1}}
+	pr, pw := io.Pipe()
+	closed := make(chan struct{})
+	body := &firstOutputCloseTrackingBody{ReadCloser: pr, closed: closed}
+	t.Cleanup(func() { _ = pw.Close(); _ = body.Close() })
+	go func() {
+		_, _ = pw.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"object\":\"response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}}\n"))
+		<-closed
+		_ = pw.Close()
+	}()
+	resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}
+	result, err := svc.handleStreamingResponse(ctx, resp, c, newOpenAIRejectedFieldTestAccount(), time.Now(), "client-model", "native-model")
+	if err != nil || result == nil || result.responseID != capture.PublicID() || !strings.Contains(recorder.Body.String(), "response.completed") || strings.Contains(recorder.Body.String(), "response.failed") || !strings.HasSuffix(recorder.Body.String(), "\n\n") {
+		t.Fatalf("committed terminal replaced/waited for upstream blank: %#v %s %v", result, recorder.Body.String(), err)
 	}
 }
