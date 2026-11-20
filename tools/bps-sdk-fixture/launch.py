@@ -512,7 +512,8 @@ def launch(args, gateway):
                                      *(["--require-managed-files"] if args.require_managed_files else []),
                                      *(["--require-stored-responses"] if getattr(args, "require_stored_responses", False) else []),
                                      *(["--require-inline-files"] if getattr(args, "require_inline_files", False) else []),
-                                     *(["--require-metadata-recovery"] if getattr(args, "require_metadata_recovery", False) else [])], env=environment,
+                                     *(["--require-metadata-recovery"] if getattr(args, "require_metadata_recovery", False) else []),
+                                     *(["--require-tool-search"] if getattr(args, "require_tool_search", False) else [])], env=environment,
                                     stdout=log, stderr=subprocess.STDOUT)
         if result.returncode:
             raise RuntimeError("fixture seed failed; inspect private seed.log")
@@ -618,6 +619,7 @@ def main():
     parser.add_argument("--require-stored-responses", action="store_true")
     parser.add_argument("--require-inline-files", action="store_true")
     parser.add_argument("--require-metadata-recovery", action="store_true")
+    parser.add_argument("--require-tool-search", action="store_true")
     args = parser.parse_args()
     args.require_managed_files = args.require_managed_files or args.require_stored_responses or args.require_inline_files or args.require_metadata_recovery
     try:

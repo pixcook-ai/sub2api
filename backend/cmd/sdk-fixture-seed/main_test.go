@@ -509,6 +509,50 @@ func testOptionalFixtureRequiresVerifiedControlPlane(t *testing.T, option string
 	}
 }
 
+func TestToolSearchFixtureScenariosAppendAfterAllExistingPools(t *testing.T) {
+	base := appendRecoveryFixtureScenarios(appendInlineFixtureScenarios(appendStoredFixtureScenarios(fixtureScenarios(true))))
+	original := append([]string(nil), base...)
+	combined := appendToolSearchFixtureScenarios(base)
+	if len(combined) != len(original)+4 {
+		t.Fatalf("tool search scenarios added %d entries, want 4", len(combined)-len(original))
+	}
+	for i, scenario := range original {
+		if combined[i] != scenario {
+			t.Fatalf("existing scenario %d changed from %s to %s", i, scenario, combined[i])
+		}
+	}
+	want := []string{"python/tool-search-loop-json", "python/tool-search-loop-sse", "javascript/tool-search-loop-json", "javascript/tool-search-loop-sse"}
+	for i, scenario := range want {
+		if combined[len(original)+i] != scenario {
+			t.Fatalf("tool search pool %d = %s, want %s", i, combined[len(original)+i], scenario)
+		}
+		for _, managed := range []*managedFixture{nil, {}} {
+			credentials := fixtureAccountCredentials("http://127.0.0.1:8790/v1", "public-key", scenario, managed)
+			if len(credentials) != 2 {
+				t.Fatalf("tool search scenario %s received a private capability: %v", scenario, credentials)
+			}
+		}
+	}
+}
+
+func TestCLIToolSearchDoesNotRequireManagedFilesBeforeConfig(t *testing.T) {
+	dir, gateway := managedSeedInputs(t)
+	delete(gateway, "managed_files")
+	raw, err := json.Marshal(gateway)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "tool-search-gateway.json")
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = run([]string{"--fixture-dir", dir, "--gateway-manifest", path, "--fixture-out", filepath.Join(dir, "seed.json"), "--main-commit", "test", "--require-tool-search"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "fixture config") || out.Len() != 0 {
+		t.Fatalf("tool search should reach only the config boundary without Files metadata: %v, output bytes %d", err, out.Len())
+	}
+}
+
 func TestCLIRejectsDirectoryWithoutFixtureMarker(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer

@@ -535,7 +535,7 @@ while True:
             self.assertTrue(LAUNCHER["launcher_matches_checkout"](repository, b"approved launcher\n"))
             self.assertFalse(LAUNCHER["launcher_matches_checkout"](repository, b"different launcher\n"))
 
-    def invoke(self, directory, *, gateway="http://127.0.0.1:8790", metrics="http://127.0.0.1:8791/metrics", key_mode=0o600, existing_output=False, managed=None, require_managed=False, require_inline=False, require_recovery=False, gateway_restart=None):
+    def invoke(self, directory, *, gateway="http://127.0.0.1:8790", metrics="http://127.0.0.1:8791/metrics", key_mode=0o600, existing_output=False, managed=None, require_managed=False, require_inline=False, require_recovery=False, require_tool_search=False, gateway_restart=None):
         root = Path(directory)
         key = root / "gateway.key"
         key.write_text("synthetic-fixture-key\n")
@@ -560,8 +560,16 @@ while True:
             *(["--require-managed-files"] if require_managed else []),
             *(["--require-inline-files"] if require_inline else []),
             *(["--require-metadata-recovery"] if require_recovery else []),
+            *(["--require-tool-search"] if require_tool_search else []),
         ], text=True, capture_output=True)
         return result, output
+
+    def test_tool_search_fixture_flag_is_independent_of_managed_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output = self.invoke(directory, require_tool_search=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("validated local fixture inputs", result.stdout)
+            self.assertFalse(output.exists(), "input validation does not certify tool search execution")
 
     def test_required_recovery_contract_requires_restart_metadata_before_services(self):
         with tempfile.TemporaryDirectory() as directory:

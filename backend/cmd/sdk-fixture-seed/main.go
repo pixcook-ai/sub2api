@@ -139,6 +139,15 @@ func appendRecoveryFixtureScenarios(scenarios []string) []string {
 	return scenarios
 }
 
+func appendToolSearchFixtureScenarios(scenarios []string) []string {
+	for _, sdk := range []string{"python", "javascript"} {
+		for _, scenario := range []string{"tool-search-loop-json", "tool-search-loop-sse"} {
+			scenarios = append(scenarios, sdk+"/"+scenario)
+		}
+	}
+	return scenarios
+}
+
 func fixtureAccountCredentials(upstream, key, scenario string, managed *managedFixture) map[string]any {
 	credentials := map[string]any{"base_url": upstream, "api_key": key}
 	if managed != nil && (strings.Contains(scenario, "/managed-file-") || strings.Contains(scenario, "/managed-recovery-")) {
@@ -389,6 +398,7 @@ func run(args []string, out io.Writer) error {
 	requireStored := fs.Bool("require-stored-responses", false, "")
 	requireInline := fs.Bool("require-inline-files", false, "")
 	requireRecovery := fs.Bool("require-metadata-recovery", false, "")
+	requireToolSearch := fs.Bool("require-tool-search", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -501,6 +511,9 @@ func run(args []string, out io.Writer) error {
 	if *requireRecovery {
 		scenarios = appendRecoveryFixtureScenarios(scenarios)
 	}
+	if *requireToolSearch {
+		scenarios = appendToolSearchFixtureScenarios(scenarios)
+	}
 	groupIDs := make([]int64, 0, len(scenarios))
 	groupByScenario := map[string]int64{}
 	accountIDs := []int64{}
@@ -566,7 +579,7 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 		scenarioKeys[scenario] = a1.Path
-		if managed == nil || (!strings.Contains(scenario, "/managed-file-") && !strings.Contains(scenario, "/managed-recovery-") && !strings.Contains(scenario, "/files-") && !strings.Contains(scenario, "/stored-")) {
+		if !strings.Contains(scenario, "/tool-search-") && (managed == nil || (!strings.Contains(scenario, "/managed-file-") && !strings.Contains(scenario, "/managed-recovery-") && !strings.Contains(scenario, "/files-") && !strings.Contains(scenario, "/stored-"))) {
 			continue
 		}
 		roleKeys := map[string]fixtureRoleKey{"a1": a1}
@@ -589,8 +602,10 @@ func run(args []string, out io.Writer) error {
 		scenarioRoleFiles[scenario], scenarioRoleKeys[scenario] = roleFiles, roleKeys
 	}
 	manifest := map[string]any{"contract_version": 1, "source": "local", "seam": "main-auth-scheduler-gateway-bps", "main_base_url": fmt.Sprintf("http://127.0.0.1:%d/v1", cfg.Server.Port), "api_key_file": first.Path, "same_user_key_file": same.Path, "other_user_key_file": other.Path, "scenario_api_key_files": scenarioKeys, "main_commit": *commit, "gateway_commit": gateway.Commit, "gateway_base_url": gateway.BaseURL, "bps_metrics_url": gateway.MetricsURL, "model": *model, "data_dir": *dir, "resources": map[string]any{"users": userIDs, "groups": groupIDs, "accounts": accountIDs, "scenario_groups": groupByScenario, "scenario_accounts": accountByScenario, "scenario_role_keys": scenarioRoleKeys}}
-	if managed != nil {
+	if managed != nil || *requireToolSearch {
 		manifest["scenario_role_key_files"] = scenarioRoleFiles
+	}
+	if managed != nil {
 		manifest["managed_files"] = map[string]any{"contract": managed.Description.Contract, "json_profile": managed.Description.JSONProfile, "identity": managed.Description.Identity, "description_sha256": managed.DescriptionSHA256}
 	}
 	if *requireStored {
@@ -603,6 +618,9 @@ func run(args []string, out io.Writer) error {
 	}
 	if *requireRecovery {
 		manifest["metadata_recovery"] = recovery
+	}
+	if *requireToolSearch {
+		manifest["tool_search"] = map[string]any{"contract": "bps-client-tool-search/1"}
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
