@@ -120,3 +120,15 @@ TDD 首先复现快照缺少工具合同，再复现启动参数缺少 `--tool-c
 在已协商 metadata recovery 的 Describe 后，Resolve 使用一次恢复轮次并采用返回的完整 reservation；重新打开公共文件及内联原文，关闭时释放新许可。Describe、admission、durable Start 前后和最终发送前复核当前授权。Start 或账本授权等待期间撤权、以及 detached send 授权期间原客户端取消均已确定性复现 RED 后修复；已开始但未发送的上传保留 uncertain 事实。ManagedFilePreparationError 将本地准备失败与账号传输健康处理分离，私有恢复头在公开入口及出站清除。
 
 最终定向 service/handler 测试 41 PASS、零失败或跳过（/tmp/bps-managed-recovery-final.jsonl）；独立 Spec 复核关闭两个 P2，Standards 初审无问题。handler 独立切片 c4752705b 同样 41 PASS。网关私有恢复头检测 1 PASS（/tmp/bps-private-recovery-header-final.jsonl）。这些数字不代表最终 SDK/PG/restart 验收；Composite 路由及模型映射鲜读围栏、14 存储合并和正式双 SDK 仍待后续集成。未推送、部署或调用真实 BPS。
+
+## 2026-11-20 — BPS compatibility 14: stored Responses production admission
+
+本地 Responses 存储接入最终 HTTP 请求：只接受服务端明确声明的独立本地能力，最终 wire 预检通过后才保留一份记录并发送一次。预检绑定账号完整身份、模型及原始 wire；客户端私有头会剥离，推理 ACK 用 HMAC 校验。标准 policy400 通过严格字段、错误码白名单及固定消息映射，预检拒绝不创建记录、不发送推理。坏 ACK 不输出上游内容，不重放，并保留可验证的 usage。候选账号改从 owning rows 校验完整私有合同，普通调度仍使用现有快照。
+
+原 caller、首输出 header deadline 和存储 lease 取消分别保留：网络继承 header 取消并接收 lease 的单向取消；正常关闭响应体不会反向取消数据库 Finalize。最终 wire 和临时预检 envelope 在复制前预留共享 ingress 内存，失败按容量503处理并退款。生成前沿用新实时授权端口，在预检前、Begin 前和唯一发送前核验原始客户模型、当前用户权限及 owning account 配置，缺端口拒绝执行。
+
+真实 RED 已复现：脱敏快照导致 advanced scheduler capability_mismatch、慢预检在超时后仍发送、慢 header 超过配置期限、预算不足仍进入预检、正常 BodyClose 导致 Finalize 的上下文取消，以及缺少实时端口或三阶段撤权后仍发送。对应回归覆盖安全 policy400、单次预检/保留/发送、坏 ACK usage 保留、正常失败状态与最终公开 payload，以及预算拒绝和临时 envelope 退款。Spec 与 Standards 独立窄复核已关闭全部原 P1/P2；最终受影响单元集合121项通过、0失败、0跳过（service5.167s、managedfiles0.343s），原始记录 /tmp/bps-main14-integrator-final.jsonl；包含普通调度/流处理的相关回归。
+
+配套 capture 独立提交保留 JSON/SSE/SSE转JSON 的最终公开字节与本地ID：持久化先于终态输出，异常只本地终止并保留已观测用量；完整终态帧立即输出，不依赖上游随后空行。HTTP 分流独立提交在存储域混用时提前拒绝，统一处理已发心跳的错误流，保留普通账号过期策略，并将实时撤权固定映射403、授权不可用映射503。其最终受影响集合38项通过、0失败、0跳过；capture11组与普通超时相关回归已通过。
+
+本条仅记录本地源码接线与定向验证；最终同主仓 base_url 的官方双 SDK、PG 重启/TTL/读取/删除及源码干净度由主线统一验收。未操作真实 BPS、推送、部署或关闭 Issue。

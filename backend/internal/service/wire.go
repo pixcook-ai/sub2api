@@ -865,8 +865,19 @@ func ProvideAPIKeyService(
 	return svc
 }
 
+// ProvideStoredResponseService preserves every configured finite storage budget.
+func ProvideStoredResponseService(repo StoredResponseRepository, cfg *config.Config) (*StoredResponseService, error) {
+	c := cfg.Gateway.StoredResponses
+	return NewStoredResponseService(repo, StoredResponseConfig{
+		Enabled: c.Enabled, RetentionDays: c.RetentionDays, LeaseSeconds: c.LeaseSeconds,
+		Limits: StoredResponseLimits{MaxResponseBytes: c.MaxResponseBytes, UserMaxRows: c.UserMaxRows, UserMaxBytes: c.UserMaxBytes, GlobalMaxRows: c.GlobalMaxRows, GlobalMaxBytes: c.GlobalMaxBytes},
+	})
+}
+
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
+	ProvideStoredResponseService,
+	NewStoredResponsesWorker,
 	ProvideFileService,
 	NewManagedFileResolver,
 	// Core services
