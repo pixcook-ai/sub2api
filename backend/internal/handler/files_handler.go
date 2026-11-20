@@ -150,7 +150,7 @@ func (h *FileHandler) Content(c *gin.Context) {
 		handleFileError(c, err)
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	c.Header("Content-Type", "application/octet-stream")
 	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": f.Filename}))
 	c.Header("Content-Length", strconv.FormatInt(f.Bytes, 10))

@@ -223,7 +223,9 @@ func TestManagedFileRecoveryRoundReopensEveryConsumedPublicAndInlineUpload(t *te
 	recoveryRoundMixed(t, plan, &m, permit)
 	old := make([]*recoveryRoundReader, 0, 2)
 	for _, ref := range []string{"file-original-upload", "file-inline-request"} {
-		old = append(old, plan.readers[ref].(*recoveryRoundReader))
+		reader, ok := plan.readers[ref].(*recoveryRoundReader)
+		require.True(t, ok)
+		old = append(old, reader)
 	}
 	opened := map[string]int{}
 	reopened := map[string]*recoveryRoundReader{}

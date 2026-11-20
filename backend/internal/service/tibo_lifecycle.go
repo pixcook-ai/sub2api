@@ -72,13 +72,13 @@ func (s *OpenAIGatewayService) StopOpenAITiboProber() {
 
 func (s *AccountTestService) ClearOpenAITiboQualityIsolation(ctx context.Context, id int64) error {
 	if s == nil || s.openaiGatewayService == nil {
-		return fmt.Errorf("Tibo account service is unavailable")
+		return fmt.Errorf("tibo account service is unavailable")
 	}
 	repo, ok := s.openaiGatewayService.accountRepo.(interface {
 		ClearOpenAITiboQualityIsolation(context.Context, int64) error
 	})
 	if !ok {
-		return fmt.Errorf("Tibo quality isolation persistence is unavailable")
+		return fmt.Errorf("tibo quality isolation persistence is unavailable")
 	}
 	return repo.ClearOpenAITiboQualityIsolation(ctx, id)
 }

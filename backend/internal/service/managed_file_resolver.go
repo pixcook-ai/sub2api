@@ -534,10 +534,12 @@ func managedInlineTemplate(plan *ManagedFilePlan, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, ErrManagedFileUnsupportedInput
 	}
-	root := value.(map[string]any)
-	input := root["input"].([]any)
+	root, _ := value.(map[string]any)
+	input, _ := root["input"].([]any)
 	for position, ref := range plan.inlineRefs {
-		part := input[position.Input].(map[string]any)["content"].([]any)[position.Part].(map[string]any)
+		item, _ := input[position.Input].(map[string]any)
+		content, _ := item["content"].([]any)
+		part, _ := content[position.Part].(map[string]any)
 		part["file_id"] = ref
 		delete(part, "file_data")
 		delete(part, "file_url")

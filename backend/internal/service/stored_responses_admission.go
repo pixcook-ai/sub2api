@@ -224,7 +224,7 @@ func (s *OpenAIGatewayService) readUnacknowledgedStoredResponseUsage(ctx context
 	defer cancel()
 	stop := context.AfterFunc(bounded, func() { _ = resp.Body.Close() })
 	defer stop()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	limit := int64(1 << 20)
 	if s.storedResponses != nil {
 		limit = s.storedResponses.cfg.Limits.MaxResponseBytes

@@ -30,7 +30,7 @@ func TestManagedInlineStagingPreservesIndexesAndCleansActiveReaders(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer staged.Close()
+	defer func() { _ = staged.Close() }()
 	files := staged.Files()
 	if len(files) != 2 || files[0].PublicID != "file-public" || files[0].SHA256 != "" || files[1].SHA256 != "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" || files[1].Position.Part != 1 {
 		t.Fatalf("staged files: %+v", files)
@@ -120,7 +120,7 @@ func TestManagedInlineStagingCancellationClosesAndRemovesBlobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer staged.Close()
+	defer func() { _ = staged.Close() }()
 	reader, err := staged.Open(0)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestManagedInlineStagingStreamsNISTMillionAAndConcurrentClose(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer staged.Close()
+	defer func() { _ = staged.Close() }()
 	if staged.Files()[0].Bytes != 1_000_000 || staged.Files()[0].SHA256 != "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0" {
 		t.Fatalf("large streamed digest: %+v", staged.Files())
 	}
@@ -309,7 +309,7 @@ func TestManagedInlineStagingCloseCanRetryFailedRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer staged.Close()
+	defer func() { _ = staged.Close() }()
 	if err := staged.Close(); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("removal error lost: %v", err)
 	}
