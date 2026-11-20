@@ -132,3 +132,13 @@ TDD 首先复现快照缺少工具合同，再复现启动参数缺少 `--tool-c
 配套 capture 独立提交保留 JSON/SSE/SSE转JSON 的最终公开字节与本地ID：持久化先于终态输出，异常只本地终止并保留已观测用量；完整终态帧立即输出，不依赖上游随后空行。HTTP 分流独立提交在存储域混用时提前拒绝，统一处理已发心跳的错误流，保留普通账号过期策略，并将实时撤权固定映射403、授权不可用映射503。其最终受影响集合38项通过、0失败、0跳过；capture11组与普通超时相关回归已通过。
 
 本条仅记录本地源码接线与定向验证；最终同主仓 base_url 的官方双 SDK、PG 重启/TTL/读取/删除及源码干净度由主线统一验收。未操作真实 BPS、推送、部署或关闭 Issue。
+
+## 2026-11-20 — BPS 实时授权、URL 下载与最终组合候选
+
+已集成 `405f8311c`：Files 与 Stored 使用独立严格能力授权，冻结客户原始 public model，并在预检、Begin 和最终发送前鲜读当前权限；97 项定向测试通过，零失败或跳过，证据 `/tmp/bps-auth-freshness-final.jsonl`。Composite/current Group/account/model mapping 的独立授权实现位于 `09def4827`，不能用调度缓存代替最终 owning rows。根 Forward/routes 接线保留 Composite public model、ctxkey.Model、body 的优先顺序，并将私有 resolver 注入请求上下文；该接线候选的 service/routes 定向回归20项通过，零失败或跳过（`/tmp/bps-root-forward-auth-expanded.jsonl`），独立 Spec/Standards 复核均无 P1/P2，三文件冻结哈希一致；限定提交 `ee0ec85f0`，最终组合验收仍待完成。
+
+`34948bcb3` 增加真实隔离 PostgreSQL 15.17、完整迁移、生产 middleware/repository 与实际 Ristretto 缓存预热后的 SQL 撤权测试。最终 `-race` 26个子测试加父用例均通过，零失败或跳过；原始证据 `/tmp/bps-fresh-auth-pg-final.jsonl`，复跑和边界 `/tmp/bps-fresh-auth-pg-progress.md`。测试数据库已停止，未修改既有系统数据库或缓存；此证据不是完整 SDK 计费结算验收。
+
+`7f0ac9e5c` 提供受控 URL 下载器：逐次 DNS/连接/跳转校验、流式字节和组合预算、取消/失败清理。普通组合、定向 service 与 race 各151项通过、零失败或跳过；证据索引 `/tmp/bps-file-url12-final-handoff.md`。URL/public ID/inline 的 full-index 暂存与 recovery 集成已提交 `6431a1669`，174项相关回归及23项race均通过，零失败或跳过（`/tmp/bps-url-public-integration-final.jsonl`、`/tmp/bps-url-public-integration-race.jsonl`），独立双审无P1/P2，五文件冻结哈希一致。
+
+gateway `ff30f0d` / `37acec4` 已登记客户端 tool_search 与 metadata recovery 双 SDK 场景，`0675b35` 增加内联/混合附件场景；登记或 fixture 通过不能替代最终公开链路。下一验收必须从干净的两个提交构建，使用 launcher 自建隔离 PG/Redis，运行全部124个官方 Python/JavaScript SDK 场景并回读 usage/ledger/balance/lease 及原生上传/生成计数。旧86项中84通过、2项DELETE失败的报告仅为历史证据，不继承为当前候选通过。真实 BPS 文档阅读、搜索、远端删除/产物及续接能力门保持独立；未调用真实 BPS、推送、部署或关闭 Issue。
