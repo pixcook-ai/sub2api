@@ -23,8 +23,9 @@ import (
 )
 
 var (
-	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
-	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
+	ErrNoUpdateAvailable          = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
+	ErrRollbackVersionNotAllowed  = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
+	ErrImageManagedUpdateRequired = infraerrors.Conflict("IMAGE_MANAGED_UPDATE_REQUIRED", "this deployment is managed by immutable image; update or roll back its pinned image through deployment tooling")
 )
 
 const (
@@ -68,15 +69,20 @@ type UpdateService struct {
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
+	imageManaged   bool
 }
 
 // NewUpdateService creates a new UpdateService
 func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+	// Image deployments must never replace their running executable with a
+	// binary from the inherited fork. Unknown explicit modes fail closed.
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_UPDATE_MODE")))
 	return &UpdateService{
 		cache:          cache,
 		githubClient:   githubClient,
 		currentVersion: version,
 		buildType:      buildType,
+		imageManaged:   mode != "" && mode != "binary",
 	}
 }
 
@@ -88,7 +94,8 @@ type UpdateInfo struct {
 	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
 	Cached         bool         `json:"cached"`
 	Warning        string       `json:"warning,omitempty"`
-	BuildType      string       `json:"build_type"` // "source" or "release"
+	BuildType      string       `json:"build_type"`            // "source" or "release"
+	UpdateMode     string       `json:"update_mode,omitempty"` // "image" requires deployment tooling
 	// Upstream 是上游仓库的只读监测结果；上面的字段都是二开自己的。
 	Upstream *UpstreamUpdateInfo `json:"upstream,omitempty"`
 }
@@ -146,6 +153,17 @@ type GitHubAsset struct {
 
 // CheckUpdate checks for available updates
 func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInfo, error) {
+	if s.imageManaged {
+		// Do not advertise inherited binary assets or reuse their cached result
+		// as an image release. Image provenance and updates belong to deployment.
+		return &UpdateInfo{
+			CurrentVersion: s.currentVersion,
+			LatestVersion:  s.currentVersion,
+			BuildType:      s.buildType,
+			UpdateMode:     "image",
+			Warning:        "Managed by immutable image; check, update or roll back the pinned image through deployment tooling.",
+		}, nil
+	}
 	// Try cache first
 	if !force {
 		if cached, err := s.getFromCache(ctx); err == nil && cached != nil {
@@ -200,6 +218,9 @@ func (s *UpdateService) upstreamInfo(latest, htmlURL, publishedAt string) *Upstr
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+	if s.imageManaged {
+		return ErrImageManagedUpdateRequired
+	}
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return err
@@ -318,6 +339,9 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 
 // Rollback restores the previous version
 func (s *UpdateService) Rollback() error {
+	if s.imageManaged {
+		return ErrImageManagedUpdateRequired
+	}
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -344,6 +368,9 @@ func (s *UpdateService) Rollback() error {
 // strictly older than the current version (the current version itself is excluded),
 // newest first. Draft and prerelease entries are skipped.
 func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVersion, error) {
+	if s.imageManaged {
+		return []RollbackVersion{}, nil
+	}
 	releases, err := s.fetchRollbackCandidates(ctx)
 	if err != nil {
 		return nil, err
@@ -364,6 +391,9 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
+	if s.imageManaged {
+		return ErrImageManagedUpdateRequired
+	}
 	target := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if target == "" {
 		return ErrRollbackVersionNotAllowed

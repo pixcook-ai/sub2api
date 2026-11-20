@@ -1,0 +1,77 @@
+# Fresh installations only. Existing sites use compose.existing.yaml as an overlay.
+# Validation: python3 validate.py --mode fresh --env-file .env --compose-file compose.yaml
+name: ${COMPOSE_PROJECT_NAME:-pixcook-sub2api}
+services:
+  sub2api:
+    image: ${PIXCOOK_IMAGE:?Set the approved ghcr.io/pixcook-ai/sub2api@sha256 digest}
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:${SERVER_PORT:-8080}:8080"
+    volumes:
+      - app-data:/app/data
+    environment:
+      AUTO_SETUP: "true"
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8080"
+      SERVER_MODE: release
+      SUB2API_UPDATE_MODE: image
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_USER: ${POSTGRES_USER:-sub2api}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      DATABASE_DBNAME: ${POSTGRES_DB:-sub2api}
+      DATABASE_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?Set a fixed JWT_SECRET}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:?Set a fixed TOTP_ENCRYPTION_KEY}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set the first administrator email}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set the first administrator password}
+      TZ: ${TZ:-Asia/Shanghai}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+  postgres:
+    # Only for a NEW database. Do not apply this service to an existing PG volume.
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sub2api}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-sub2api}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  app-data:
+  pg-data:
+  redis-data:

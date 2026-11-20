@@ -1,0 +1,10 @@
+# Overlay ONLY onto the site's original Compose files with its original project
+# name, env file, data mounts, database/cache images and credentials unchanged.
+# Keep the original Compose first so its relative volume paths stay anchored.
+# Validate with validate.py --mode existing --baseline-file ORIGINAL.yml
+#   --compose-file ORIGINAL.yml --compose-file compose.existing.yaml
+services:
+  sub2api:
+    image: ${PIXCOOK_IMAGE:?Set the approved ghcr.io/pixcook-ai/sub2api@sha256 digest}
+    environment:
+      SUB2API_UPDATE_MODE: image
