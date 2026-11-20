@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/gwpool"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -259,6 +263,42 @@ func gwpoolRotationTestIdentity(t *testing.T, svc *OpenAIGatewayService, account
 	return identity
 }
 
+// Preparation can outlive one business waiter. Its probes are independent
+// traffic; atomic counters avoid reading a worker-owned slice during cleanup.
+type gatewayPoolDeadlineUpstream struct {
+	business atomic.Int32
+	probes   atomic.Int32
+}
+
+func (u *gatewayPoolDeadlineUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	kind, _ := req.Context().Value(openAIRecordingKindKey{}).(string)
+	if kind == "warm_probe_a" || kind == "warm_probe_b" {
+		u.probes.Add(1)
+	} else {
+		u.business.Add(1)
+	}
+	header := make(http.Header)
+	header.Set(openAICodexTurnStateHeader, "deadline-test-state")
+	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func (u *gatewayPoolDeadlineUpstream) DoWithTLS(req *http.Request, proxy string, id int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxy, id, concurrency)
+}
+
+func waitGatewayPoolDeadlineWorkers(t *testing.T, svc *OpenAIGatewayService) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		svc.codexCookies.poolPrepare.mu.Lock()
+		preparing := len(svc.codexCookies.poolPrepare.calls)
+		svc.codexCookies.poolPrepare.mu.Unlock()
+		svc.codexCookies.poolWarm.mu.Lock()
+		probing := len(svc.codexCookies.poolWarm.calls)
+		svc.codexCookies.poolWarm.mu.Unlock()
+		return preparing == 0 && probing == 0
+	}, 3*time.Second, time.Millisecond, "workers must finish before fixture teardown")
+}
+
 func TestGatewayPoolRetryDeadlinePreventsLateBusinessDispatch(t *testing.T) {
 	for _, expiresDuringFetch := range []bool{false, true} {
 		t.Run(fmt.Sprintf("during_fetch=%t", expiresDuringFetch), func(t *testing.T) {
@@ -266,7 +306,7 @@ func TestGatewayPoolRetryDeadlinePreventsLateBusinessDispatch(t *testing.T) {
 			account.Extra[openAIGatewayPoolGuardEnabledExtraKey] = false
 			fake := newGwpoolFakePool(t, gwpoolTestPairCookie(t, "unified-142"), 150)
 			fake.configure(account)
-			upstream := &gwpoolEchoUpstream{}
+			upstream := &gatewayPoolDeadlineUpstream{}
 			svc := &OpenAIGatewayService{httpUpstream: upstream}
 			deadline := time.Now().Add(-time.Second)
 			if expiresDuringFetch {
@@ -282,7 +322,7 @@ func TestGatewayPoolRetryDeadlinePreventsLateBusinessDispatch(t *testing.T) {
 				accountID: account.ID, deadline: deadline,
 				failure: &UpstreamFailoverError{StatusCode: 429, ResponseBody: []byte(`{"detail":"Rate limit exceeded"}`)},
 			})
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, gwpoolTestURL, nil)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, gwpoolTestURL, strings.NewReader(`{"model":"gpt-6-astra","input":"deadline-business-only"}`))
 			require.NoError(t, err)
 			response, err := svc.doOpenAIUpstream(req, "", account)
 			require.Nil(t, response)
@@ -290,10 +330,67 @@ func TestGatewayPoolRetryDeadlinePreventsLateBusinessDispatch(t *testing.T) {
 			require.ErrorAs(t, err, &failure)
 			require.Equal(t, 429, failure.StatusCode)
 			require.False(t, failure.RetryableOnSameAccount)
-			require.Empty(t, upstream.sentBodies)
+			waitGatewayPoolDeadlineWorkers(t, svc)
+			require.Zero(t, upstream.business.Load(), "expired business must not be sent; shared warm probes are independent")
 			require.NoError(t, ctx.Err(), "dispatch admission must not impose a response-stream deadline")
 		})
 	}
+}
+
+func TestGatewayPoolRetryDeadlineLeavesLiveSharedPreparation(t *testing.T) {
+	fake := newGwpoolFakePool(t, gwpoolTestPairCookie(t, "unified-142"), 150)
+	account := fake.account(1)
+	upstream := &gatewayPoolDeadlineUpstream{}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	cookieStarted, releaseCookie := make(chan struct{}), make(chan struct{})
+	fake.onCookie = func() { close(cookieStarted); <-releaseCookie }
+	followerCtx, cancelFollower := context.WithCancel(context.Background())
+	followerDone := make(chan error, 1)
+	follower, err := http.NewRequestWithContext(followerCtx, http.MethodPost, gwpoolTestURL, strings.NewReader(gwpoolEchoBody1))
+	require.NoError(t, err)
+	go func() { followerDone <- svc.gatewayPoolWarmUp(follower, "", account) }()
+	released := false
+	defer func() {
+		cancelFollower()
+		if !released {
+			close(releaseCookie)
+		}
+		waitGatewayPoolDeadlineWorkers(t, svc)
+	}()
+	select {
+	case <-cookieStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ticket acquisition did not start")
+	}
+	// The live follower owns no retry deadline. Keep its ticket response blocked
+	// until the business waiter has returned its expired 429.
+	ctx := context.WithValue(context.Background(), gatewayPoolRetryOnlyKey{}, gatewayPoolRetryOnly{
+		accountID: account.ID, deadline: time.Now().Add(100 * time.Millisecond),
+		failure: &UpstreamFailoverError{StatusCode: http.StatusTooManyRequests},
+	})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, gwpoolTestURL, strings.NewReader(`{"model":"gpt-6-astra","input":"expired-business-only"}`))
+	require.NoError(t, err)
+	response, err := svc.doOpenAIUpstream(request, "", account)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	require.Nil(t, response)
+	var failure *UpstreamFailoverError
+	require.ErrorAs(t, err, &failure)
+	require.Equal(t, http.StatusTooManyRequests, failure.StatusCode)
+	require.False(t, failure.RetryableOnSameAccount)
+	require.NoError(t, ctx.Err(), "retry admission must not deadline the original response stream")
+	close(releaseCookie)
+	released = true
+	select {
+	case err := <-followerDone:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("live follower did not finish preparation")
+	}
+	waitGatewayPoolDeadlineWorkers(t, svc)
+	require.EqualValues(t, 2, upstream.probes.Load(), "live follower completes both state-echo probes after retry expiry")
+	require.Zero(t, upstream.business.Load(), "expired business must never be sent while the live follower prepares")
 }
 
 func TestGatewayPoolRotationFreshOptInsAndGroupIsolation(t *testing.T) {
