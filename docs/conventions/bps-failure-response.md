@@ -1,0 +1,11 @@
+# BPS translated failure response
+
+`X-Bps-Response-Contract: failure-v1` is produced by the selected gateway response. Main accepts one exact header value only for OpenAI API-key upstreams. Client headers never establish this contract. The marker is a versioned compatibility declaration, not authentication, execution absence, billing exemption or exactly-once evidence.
+
+Gateway marks translated SSE HTTP 200 and nonstream JSON failures containing its diagnostic `response` extension. Main validates the actual fixed classifier error code/type/public message and semantic status. SSE `response.error` includes semantic `status`; nonstream uses HTTP status. Unknown versions, duplicate decoded JSON keys, status mismatches and unknown error shapes retain ordinary upstream handling. The contract includes cancelled, failed, rate/quota, authentication, request-size and server failures. Raw upstream diagnostics are never accepted as public classifier messages.
+
+A validated terminal remains on its attempt: SSE keeps HTTP 200 with its failed/cancelled terminal; nonstream keeps the actual HTTP error and safe diagnostic extension. Main does not perform compatibility retries or account failover after this terminal. Account health/rate side effects still run. Failed responses are never bound as reusable successful response IDs. Client SDK retries remain client policy and can create a new request; this contract does not promise server POST idempotency.
+
+Failure output is empty. Public usage retains only finite nonnegative exact integer standard input/output/total, cached and reasoning counts, bounded to the JSON safe integer range. Missing/invalid usage is not fabricated zero; only recognized observed numeric evidence reaches the existing handler error-settlement path. Count projection and evidence share exact validation. Model, billing, timing and headers reuse normal result construction. Image failure settlement remains outside this text-only slice.
+
+Development checks cover real Forward with selected HTTP upstream responses and authenticated gateway handlers, including four-field SSE classifier shape, cancellation, 503, 413, inbound spoof, duplicates, unknown usage and fractional/huge exponents. Official Python/JavaScript SDK through the actual main auth/scheduler/gateway and PostgreSQL usage readback remains required before issue closure.
