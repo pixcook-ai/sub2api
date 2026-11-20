@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
@@ -16,9 +17,11 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
 from urllib.parse import urlsplit
+
+LAUNCHER_SOURCE = Path(__file__).read_bytes()
 
 
 def loopback_url(value, field):
@@ -41,8 +44,8 @@ def private_file(value, field):
     return path.resolve(strict=True)
 
 
-def gateway_inputs(manifest_path):
-    value = json.loads(private_file(manifest_path, "gateway_manifest").read_text())
+def gateway_inputs(manifest_path, require_managed=False):
+    value = strict_json(private_read(manifest_path, "gateway_manifest"))
     if value.get("contract_version") != 1 or value.get("source") != "local":
         raise ValueError("gateway manifest must be a version 1 local fixture")
     if value.get("seam") != "gateway-diagnostic":
@@ -52,7 +55,119 @@ def gateway_inputs(manifest_path):
         raise ValueError("gateway_base_url must use the root or /v1 path")
     metrics = loopback_url(value.get("bps_metrics_url"), "bps_metrics_url")
     key = private_file(value.get("api_key_file"), "api_key_file")
-    return value | {"gateway_base_url": gateway, "bps_metrics_url": metrics, "api_key_file": str(key)}
+    value = value | {"gateway_base_url": gateway, "bps_metrics_url": metrics, "api_key_file": str(key)}
+    managed = value.get("managed_files")
+    if managed is None:
+        if require_managed:
+            raise ValueError("managed_files contract is required")
+        return value
+    if not isinstance(managed, dict) or managed.get("contract") != "bps-files/1" or managed.get("json_profile") != "bps-files-json/1":
+        raise ValueError("managed_files contract is invalid")
+    control = loopback_url(managed.get("control_url"), "managed_files.control_url")
+    address, public = urlsplit(control), urlsplit(gateway)
+    if address.path:
+        raise ValueError("managed_files.control_url must use the gateway root")
+    if (address.scheme, address.hostname, address.port) != (public.scheme, public.hostname, public.port):
+        raise ValueError("managed_files.control_url must have the same origin as the gateway")
+    for field in ("backend_id", "credential_generation"):
+        if not isinstance(managed.get(field), str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", managed[field]):
+            raise ValueError("managed_files identity is invalid")
+    service = private_file(managed.get("service_key_file"), "managed_files.service_key_file")
+    service_key = private_read(service, "managed_files.service_key_file", 1025)
+    if (not 32 <= len(service_key.strip()) <= 1024 or len(service_key) > 1025
+            or service_key.strip() == private_read(key, "api_key_file").strip()
+            or any(c < 33 or c > 126 for c in service_key.strip())):
+        raise ValueError("managed_files requires an independent private service key")
+    return value | {"managed_files": managed | {"control_url": control, "service_key_file": str(service)}}
+
+
+def private_read(value, field, limit=1 << 20):
+    path = private_file(value, field)
+    before = path.stat()
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if ((before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+                or not stat.S_ISREG(opened.st_mode) or stat.S_IMODE(opened.st_mode) & 0o077):
+            raise ValueError(f"{field} changed during open")
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError(f"{field} exceeds private input limit")
+    return raw
+
+
+def strict_json(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON field")
+            result[key] = value
+        return result
+    def invalid_constant(_value):
+        raise ValueError("invalid JSON number")
+    return json.loads(raw, object_pairs_hook=unique, parse_constant=invalid_constant)
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, _request, _response, _code, _message, _headers, _url):
+        return None
+
+
+def describe_managed_files(gateway):
+    managed = gateway.get("managed_files")
+    if managed is None:
+        return gateway
+    try:
+        key = private_read(managed["service_key_file"], "managed_files.service_key_file", 1025).decode().strip()
+        request = Request(managed["control_url"] + "/internal/bps-files/v1/describe",
+                          headers={"X-Bps-Service-Key": key, "Accept": "application/json"})
+        # Ambient proxies and redirects must never receive the private service credential.
+        opener = build_opener(ProxyHandler({}), NoRedirect())
+        with opener.open(request, timeout=5) as response:
+            if response.status != 200 or response.headers.get_content_type() != "application/json":
+                raise ValueError("unexpected description response")
+            raw = response.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("description too large")
+        description = strict_json(raw)
+        fields = {"contract", "json_profile", "backend_id", "subject_fingerprint",
+                  "credential_generation", "capabilities", "limits"}
+        if not isinstance(description, dict) or set(description) != fields:
+            raise ValueError("invalid description fields")
+        if (description["contract"] != "bps-files/1" or description["json_profile"] != "bps-files-json/1"
+                or description["backend_id"] != managed["backend_id"]
+                or description["credential_generation"] != managed["credential_generation"]
+                or not isinstance(description["subject_fingerprint"], str)
+                or not re.fullmatch(r"sha256:[a-f0-9]{64}", description["subject_fingerprint"])):
+            raise ValueError("description identity mismatch")
+        capabilities = description["capabilities"]
+        expected = {"batch_admit": True, "ensure_upload": True, "metadata_recovery": False}
+        if (not isinstance(capabilities, dict) or set(capabilities) != set(expected)
+                or any(capabilities[field] is not value for field, value in expected.items())):
+            raise ValueError("unsupported description capabilities")
+        ranges = {"file_bytes": (34603027, 200 << 20), "message_bytes": (34603027, 500 << 20),
+                  "message_positions": (1, 20), "staging_bytes": (34603027, 16 << 30),
+                  "admission_bytes": (34603027, 2 << 30), "concurrent_admissions": (1, 32),
+                  "live_admissions": (1, 256), "admission_ttl_seconds": (1, 3600),
+                  "manifest_bytes": (1, 64 << 20), "unique_files": (1, 128),
+                  "free_space_reserve_bytes": (1, 16 << 30), "admit_timeout_seconds": (1, 3600),
+                  "ensure_timeout_seconds": (1, 3600)}
+        limits = description["limits"]
+        if (not isinstance(limits, dict) or set(limits) != set(ranges)
+                or any(type(limits[field]) is not int or not low <= limits[field] <= high
+                       for field, (low, high) in ranges.items())
+                or limits["message_bytes"] < limits["file_bytes"]
+                or limits["admission_bytes"] < limits["file_bytes"]
+                or limits["staging_bytes"] < limits["admission_bytes"]
+                or limits["live_admissions"] < limits["concurrent_admissions"]):
+            raise ValueError("unbounded description limits")
+    except HTTPError as error:
+        error.close()
+        raise ValueError("managed_files Describe failed validation") from None
+    except (OSError, URLError, UnicodeError, ValueError, TypeError, KeyError):
+        # Never surface raw response bodies, header values, URLs or credentials.
+        raise ValueError("managed_files Describe failed validation") from None
+    return gateway | {"managed_files": managed | {"description": description}}
 
 
 def command(*args, cwd=None, env=None):
@@ -144,6 +259,15 @@ def source_state(repository):
     }
 
 
+def launcher_matches_checkout(repository, payload):
+    relative = "tools/bps-sdk-fixture/launch.py"
+    try:
+        command("git", "ls-files", "--error-unmatch", "--", relative, cwd=repository)
+        return (repository / relative).read_bytes() == payload
+    except (OSError, RuntimeError):
+        return False
+
+
 def binary_digest(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -152,13 +276,37 @@ def binary_digest(path):
     return digest.hexdigest()
 
 
-def build_gateway_fixture(repository, data_dir):
+def snapshot_gateway_sources(repository, data_dir):
+    snapshot = data_dir / "gateway-source"
+    snapshot.mkdir(mode=0o700)
+    hashes = {}
+    for relative in ("scripts/sdk-conformance/fixture.py", "scripts/sdk-conformance/gateway_fixture.go.txt",
+                     "scripts/sdk-conformance/native_fixture.go.txt", "scripts/sdk-conformance/cases/sse.json"):
+        payload = (repository / relative).read_bytes()
+        target = snapshot / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        target.chmod(0o400)
+        hashes[relative] = hashlib.sha256(payload).hexdigest()
+    return snapshot, hashes
+
+
+def prepare_seed_gateway(gateway, data_dir):
+    verified = describe_managed_files(gateway)
+    path = data_dir / "gateway-seed-input.json"
+    private_write(path, verified)
+    return verified, path
+
+
+def build_gateway_fixture(repository, data_dir, snapshot):
     module = repository / "bps-local"
     binary = data_dir / "gateway-fixture"
     with tempfile.TemporaryDirectory(prefix="sdk-fixture-", dir=module) as source_dir:
         source = Path(source_dir) / "main.go"
-        shutil.copyfile(repository / "scripts/sdk-conformance/gateway_fixture.go.txt", source)
-        command("go", "build", "-mod=vendor", "-o", binary, source, cwd=module)
+        shutil.copyfile(snapshot / "scripts/sdk-conformance/gateway_fixture.go.txt", source)
+        helper = Path(source_dir) / "native_fixture.go"
+        shutil.copyfile(snapshot / "scripts/sdk-conformance/native_fixture.go.txt", helper)
+        command("go", "build", "-mod=vendor", "-o", binary, source, helper, cwd=module)
     return binary
 
 
@@ -201,22 +349,38 @@ def launch(args, gateway):
             gateway_log = (data_dir / "gateway.log").open("w")
             os.chmod(gateway_log.name, 0o600)
             gateway_source = source_state(gateway_repository)
-            gateway_binary = build_gateway_fixture(gateway_repository, data_dir)
-            gateway_process = subprocess.Popen([sys.executable, str(fixture_script), "--binary", str(gateway_binary), "--out", str(gateway_manifest)], stdout=gateway_log, stderr=subprocess.STDOUT, start_new_session=True, env=process_environment(data_dir))
+            gateway_snapshot, gateway_source_hashes = snapshot_gateway_sources(gateway_repository, data_dir)
+            fixture_script = gateway_snapshot / "scripts/sdk-conformance/fixture.py"
+            fixture_cases = gateway_snapshot / "scripts/sdk-conformance/cases/sse.json"
+            gateway_binary = build_gateway_fixture(gateway_repository, data_dir, gateway_snapshot)
+            gateway_process = subprocess.Popen([sys.executable, str(fixture_script), "--binary", str(gateway_binary), "--cases", str(fixture_cases), "--out", str(gateway_manifest)], stdout=gateway_log, stderr=subprocess.STDOUT, start_new_session=True, env=process_environment(data_dir))
             def gateway_ready():
                 if gateway_process.poll() is not None:
                     raise RuntimeError("owned gateway fixture exited; inspect private gateway.log")
                 return gateway_manifest.exists()
             wait_until("owned gateway fixture", gateway_ready)
-            gateway = gateway_inputs(gateway_manifest)
+            gateway = gateway_inputs(gateway_manifest, args.require_managed_files)
             gateway_after_build = source_state(gateway_repository)
             gateway["gateway_commit"] = gateway_source["commit"]
             gateway["gateway_tracked_dirty"] = gateway_source["tracked_dirty"] or gateway_after_build["tracked_dirty"]
             gateway["gateway_source_clean"] = not gateway_source["source_dirty"] and gateway_after_build == gateway_source
             gateway["gateway_binary_sha256"] = binary_digest(gateway_binary)
-            # Replace only our private diagnostic manifest, before the seed reads it.
-            gateway_manifest.write_text(json.dumps(gateway))
-            args.gateway_manifest = str(gateway_manifest)
+            gateway["gateway_source_files_sha256"] = gateway_source_hashes
+        gateway, seed_gateway_input = prepare_seed_gateway(gateway, data_dir)
+        main_source = source_state(repository)
+        # Capture the exact harness and seed sources without rereading live files later.
+        launcher_source = LAUNCHER_SOURCE
+        launcher_source_matches = launcher_matches_checkout(repository, launcher_source)
+        launcher_snapshot = data_dir / "launcher-source.py"
+        launcher_snapshot.write_bytes(launcher_source)
+        launcher_snapshot.chmod(0o400)
+        seed_source_hashes = {}
+        for relative in ("backend/cmd/sdk-fixture-seed/main.go", "backend/cmd/sdk-fixture-seed/main_test.go"):
+            payload = (repository / relative).read_bytes()
+            snapshot = data_dir / ("seed-" + Path(relative).name)
+            snapshot.write_bytes(payload)
+            snapshot.chmod(0o400)
+            seed_source_hashes[relative] = hashlib.sha256(payload).hexdigest()
         database_name = "bps_sdk_" + run_id
         password = secrets.token_hex(24)
         for kind, image, inner_port, extra in [
@@ -247,7 +411,6 @@ def launch(args, gateway):
         # JSON is valid YAML, so no additional configuration serializer is needed.
         private_write(data_dir / "config.yaml", configuration)
         environment = process_environment(data_dir)
-        main_source = source_state(repository)
         commit = main_source["commit"]
         main_tracked_dirty = main_source["tracked_dirty"]
         main_binary = Path(args.main_binary).resolve(strict=True) if args.main_binary else data_dir / "sub2api"
@@ -262,9 +425,10 @@ def launch(args, gateway):
         with (data_dir / "seed.log").open("w") as log:
             os.chmod(log.name, 0o600)
             result = subprocess.run(["rtk", "proxy", str(seed_binary), "--fixture-dir", str(data_dir),
-                                     "--gateway-manifest", str(Path(args.gateway_manifest).resolve()),
+                                     "--gateway-manifest", str(seed_gateway_input),
                                      "--model", args.model, "--main-commit", commit,
-                                     "--fixture-out", str(seed_manifest)], env=environment,
+                                     "--fixture-out", str(seed_manifest),
+                                     *(["--require-managed-files"] if args.require_managed_files else [])], env=environment,
                                     stdout=log, stderr=subprocess.STDOUT)
         if result.returncode:
             raise RuntimeError("fixture seed failed; inspect private seed.log")
@@ -284,11 +448,15 @@ def launch(args, gateway):
             "gateway_tracked_dirty": gateway.get("gateway_tracked_dirty"),
             "main_source_clean": not main_source["source_dirty"] and main_after_build == main_source,
             "gateway_source_clean": gateway.get("gateway_source_clean", False),
-            "source_provenance_verified": not (args.main_binary or args.seed_binary) and bool(args.gateway_repo) and not main_source["source_dirty"] and main_after_build == main_source and gateway.get("gateway_source_clean") is True,
+            "source_provenance_verified": not (args.main_binary or args.seed_binary) and bool(args.gateway_repo) and launcher_source_matches and not main_source["source_dirty"] and main_after_build == main_source and gateway.get("gateway_source_clean") is True,
             "binary_source": "prebuilt-diagnostic" if args.main_binary or args.seed_binary else "launcher-built",
             "main_binary_sha256": binary_digest(main_binary),
             "seed_binary_sha256": binary_digest(seed_binary),
             "gateway_binary_sha256": gateway.get("gateway_binary_sha256"),
+            "gateway_source_files_sha256": gateway.get("gateway_source_files_sha256"),
+            "launcher_source_sha256": hashlib.sha256(launcher_source).hexdigest(),
+            "launcher_source_matches_checkout": launcher_source_matches,
+            "seed_source_files_sha256": seed_source_hashes,
             "container_images": {"postgres": args.postgres_image, "redis": args.redis_image},
             "launcher_pid": os.getpid(), "main_pid": server.pid,
             "main_restart_file": str(restart_path),
@@ -309,6 +477,8 @@ def launch(args, gateway):
                 restart_requested = False
             if server.poll() is not None:
                 raise RuntimeError("real main server stopped before fixture shutdown")
+            if gateway_process is not None and gateway_process.poll() is not None:
+                raise RuntimeError("owned gateway fixture stopped before fixture shutdown")
             time.sleep(0.25)
     finally:
         cleanup_errors = []
@@ -355,9 +525,10 @@ def main():
     parser.add_argument("--redis-image", default="redis:8.4-alpine")
     parser.add_argument("--keep-private-logs", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--require-managed-files", action="store_true")
     args = parser.parse_args()
     try:
-        gateway = gateway_inputs(args.gateway_manifest) if args.gateway_manifest else None
+        gateway = gateway_inputs(args.gateway_manifest, args.require_managed_files) if args.gateway_manifest else None
         if args.gateway_repo and not (Path(args.gateway_repo) / "scripts/sdk-conformance/fixture.py").is_file():
             raise ValueError("gateway-repo has no SDK fixture launcher")
         if Path(args.out).exists():

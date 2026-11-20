@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,10 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/managedfiles"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -38,7 +41,20 @@ func privateFile(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return nil, fmt.Errorf("private regular file required: %s", path)
 	}
-	return os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || opened.Mode().Perm()&0077 != 0 || !os.SameFile(info, opened) {
+		return nil, errors.New("private file changed during open")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	if err != nil || len(raw) > 1<<20 {
+		return nil, errors.New("private fixture input exceeds limit")
+	}
+	return raw, nil
 }
 func writePrivate(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -59,7 +75,174 @@ func token() string {
 func loopback(host string) bool { ip := net.ParseIP(host); return ip != nil && ip.IsLoopback() }
 func localURL(value string) bool {
 	u, err := url.Parse(value)
-	return err == nil && u.Scheme == "http" && loopback(u.Hostname()) && u.Port() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+	if err != nil || strings.TrimSpace(value) != value || u.Scheme != "http" || !loopback(u.Hostname()) || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" {
+		return false
+	}
+	port, err := strconv.Atoi(u.Port())
+	return err == nil && port > 0 && port <= 65535
+}
+
+type managedFixture struct {
+	ControlURL        string
+	ServiceKey        string
+	Description       managedfiles.DescribeResult
+	DescriptionSHA256 string
+}
+
+func fixtureScenarios(managed bool) []string {
+	base := []string{
+		"upstream429-no-retry", "upstream429-default-retry", "truncated",
+		"policy-rejections", "policy-catalog", "tool-strict-default",
+		"failed-usage-sse", "failed-usage-json", "truncated-json",
+		"incomplete-sse", "incomplete-json", "annotations-sse", "annotations-json",
+	}
+	if managed {
+		base = append(base, "managed-file-json", "managed-file-sse", "managed-file-large-json", "managed-file-large-sse",
+			"managed-file-owner-deny", "managed-file-othergroup-deny", "managed-file-private-header-forgery",
+			"files-list-pages", "files-cursor-owner", "files-expiry-contract")
+	}
+	scenarios := []string{"default"}
+	for _, sdk := range []string{"python", "javascript"} {
+		for _, scenario := range base {
+			scenarios = append(scenarios, sdk+"/"+scenario)
+		}
+	}
+	return scenarios
+}
+
+func fixtureAccountCredentials(upstream, key, scenario string, managed *managedFixture) map[string]any {
+	credentials := map[string]any{"base_url": upstream, "api_key": key}
+	if managed != nil && strings.Contains(scenario, "/managed-file-") {
+		credentials["openai_capabilities"] = []string{"bps_files", "chat_completions", "responses"}
+		credentials["bps_files_contract"] = managed.Description.Contract
+		credentials["bps_files_control_url"] = managed.ControlURL
+		credentials["bps_files_service_key"] = managed.ServiceKey
+		credentials["bps_files_backend_id"] = managed.Description.BackendID
+		credentials["bps_files_subject_fingerprint"] = managed.Description.SubjectFingerprint
+		credentials["bps_files_credential_generation"] = managed.Description.CredentialGeneration
+	}
+	return credentials
+}
+
+type fixtureRoleKey struct {
+	ID      int64  `json:"id"`
+	UserID  int64  `json:"user_id"`
+	GroupID int64  `json:"group_id"`
+	Path    string `json:"-"`
+}
+
+func exactFixtureObject(value any, names ...string) (map[string]any, bool) {
+	object, ok := value.(map[string]any)
+	if !ok || len(object) != len(names) {
+		return nil, false
+	}
+	for _, name := range names {
+		if _, exists := object[name]; !exists {
+			return nil, false
+		}
+	}
+	return object, true
+}
+
+// The launcher authenticates Describe; the seed independently validates the
+// resulting private snapshot before opening the isolated fixture database.
+func validateManagedFixture(raw json.RawMessage, gatewayURL, publicKey string, required bool) (*managedFixture, error) {
+	fail := func() (*managedFixture, error) { return nil, errors.New("invalid managed fixture metadata") }
+	if len(raw) == 0 {
+		if required {
+			return fail()
+		}
+		return nil, nil
+	}
+	value, err := managedfiles.Parse(raw)
+	if err != nil {
+		return fail()
+	}
+	root, ok := exactFixtureObject(value, "contract", "json_profile", "control_url", "service_key_file", "backend_id", "credential_generation", "description")
+	if !ok {
+		return fail()
+	}
+	fields := map[string]string{}
+	for _, name := range []string{"contract", "json_profile", "control_url", "service_key_file", "backend_id", "credential_generation"} {
+		field, ok := root[name].(string)
+		if !ok || field == "" || strings.TrimSpace(field) != field {
+			return fail()
+		}
+		fields[name] = field
+	}
+	control, err := url.Parse(fields["control_url"])
+	upstream, _ := url.Parse(gatewayURL)
+	if err != nil || !localURL(fields["control_url"]) || control.Path != "" || control.Scheme != upstream.Scheme || control.Host != upstream.Host ||
+		fields["contract"] != managedfiles.Contract || fields["json_profile"] != managedfiles.JSONProfile || !filepath.IsAbs(fields["service_key_file"]) {
+		return fail()
+	}
+	secret, err := privateFile(fields["service_key_file"])
+	serviceKey := strings.TrimSpace(string(secret))
+	if err != nil || len(secret) > 1025 || len(serviceKey) < 32 || len(serviceKey) > 1024 || serviceKey == publicKey {
+		return fail()
+	}
+	for _, b := range []byte(serviceKey) {
+		if b < 33 || b > 126 {
+			return fail()
+		}
+	}
+	for _, name := range []string{"backend_id", "credential_generation"} {
+		if !regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`).MatchString(fields[name]) {
+			return fail()
+		}
+	}
+	description, ok := exactFixtureObject(root["description"], "contract", "json_profile", "backend_id", "subject_fingerprint", "credential_generation", "limits", "capabilities")
+	if !ok {
+		return fail()
+	}
+	for _, field := range []string{"contract", "json_profile", "backend_id", "subject_fingerprint", "credential_generation"} {
+		if _, ok := description[field].(string); !ok {
+			return fail()
+		}
+	}
+	limits, ok := exactFixtureObject(description["limits"], "file_bytes", "message_bytes", "message_positions", "staging_bytes", "admission_bytes", "concurrent_admissions", "live_admissions", "admission_ttl_seconds", "manifest_bytes", "unique_files", "free_space_reserve_bytes", "admit_timeout_seconds", "ensure_timeout_seconds")
+	if !ok {
+		return fail()
+	}
+	for _, value := range limits {
+		number, ok := value.(json.Number)
+		if !ok {
+			return fail()
+		}
+		if _, err := number.Int64(); err != nil {
+			return fail()
+		}
+	}
+	capabilities, ok := exactFixtureObject(description["capabilities"], "batch_admit", "ensure_upload", "metadata_recovery")
+	if !ok {
+		return fail()
+	}
+	for _, field := range []string{"batch_admit", "ensure_upload", "metadata_recovery"} {
+		if _, ok := capabilities[field].(bool); !ok {
+			return fail()
+		}
+	}
+	canonical, err := json.Marshal(description)
+	if err != nil {
+		return fail()
+	}
+	var observed managedfiles.DescribeResult
+	if json.Unmarshal(canonical, &observed) != nil || observed.Contract != managedfiles.Contract || observed.JSONProfile != managedfiles.JSONProfile ||
+		observed.BackendID != fields["backend_id"] || observed.CredentialGeneration != fields["credential_generation"] || managedfiles.ValidateIdentity(observed.Identity) != nil ||
+		!observed.Capabilities.BatchAdmit || !observed.Capabilities.EnsureUpload || observed.Capabilities.MetadataRecovery {
+		return fail()
+	}
+	l := observed.Limits
+	if l.FileBytes < 34603027 || l.FileBytes > managedfiles.MaxFileBytes || l.MessageBytes < l.FileBytes || l.MessageBytes > managedfiles.MaxMessageBytes ||
+		l.MessagePositions < 1 || l.MessagePositions > managedfiles.MaxMessagePositions || l.StagingBytes < l.AdmissionBytes || l.StagingBytes > 16<<30 ||
+		l.AdmissionBytes < l.FileBytes || l.AdmissionBytes > 2<<30 || l.ConcurrentAdmissions < 1 || l.ConcurrentAdmissions > 32 ||
+		l.LiveAdmissions < l.ConcurrentAdmissions || l.LiveAdmissions > 256 || l.AdmissionTTLSeconds < 1 || l.AdmissionTTLSeconds > 3600 ||
+		l.ManifestBytes < 1 || l.ManifestBytes > managedfiles.MaxJSONBytes || l.UniqueFiles < 1 || l.UniqueFiles > managedfiles.MaxUniqueFiles ||
+		l.FreeSpaceReserveBytes < 1 || l.FreeSpaceReserveBytes > 16<<30 || l.AdmitTimeoutSeconds < 1 || l.AdmitTimeoutSeconds > 3600 || l.EnsureTimeoutSeconds < 1 || l.EnsureTimeoutSeconds > 3600 {
+		return fail()
+	}
+	digest := sha256.Sum256(canonical)
+	return &managedFixture{ControlURL: fields["control_url"], ServiceKey: serviceKey, Description: observed, DescriptionSHA256: hex.EncodeToString(digest[:])}, nil
 }
 
 func run(args []string, out io.Writer) error {
@@ -70,6 +253,7 @@ func run(args []string, out io.Writer) error {
 	model := fs.String("model", "gpt-6-astra", "")
 	commit := fs.String("main-commit", "", "")
 	output := fs.String("fixture-out", "", "")
+	requireManaged := fs.Bool("require-managed-files", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -98,20 +282,24 @@ func run(args []string, out io.Writer) error {
 		return errors.New("fixture output already exists")
 	}
 	var gateway struct {
-		Version    int    `json:"contract_version"`
-		Source     string `json:"source"`
-		Seam       string `json:"seam"`
-		BaseURL    string `json:"gateway_base_url"`
-		MetricsURL string `json:"bps_metrics_url"`
-		KeyFile    string `json:"api_key_file"`
-		Commit     string `json:"gateway_commit"`
+		Version      int             `json:"contract_version"`
+		Source       string          `json:"source"`
+		Seam         string          `json:"seam"`
+		BaseURL      string          `json:"gateway_base_url"`
+		MetricsURL   string          `json:"bps_metrics_url"`
+		KeyFile      string          `json:"api_key_file"`
+		Commit       string          `json:"gateway_commit"`
+		ManagedFiles json.RawMessage `json:"managed_files"`
 	}
 	data, err := privateFile(*gatewayPath)
 	if err != nil {
 		return err
 	}
+	if _, err = managedfiles.Parse(data); err != nil {
+		return errors.New("invalid private gateway manifest")
+	}
 	if err = json.Unmarshal(data, &gateway); err != nil {
-		return err
+		return errors.New("invalid private gateway manifest")
 	}
 	if gateway.Version != 1 || gateway.Source != "local" || gateway.Seam != "gateway-diagnostic" || !localURL(gateway.BaseURL) || !localURL(gateway.MetricsURL) {
 		return errors.New("gateway must be a local loopback diagnostic fixture")
@@ -126,6 +314,10 @@ func run(args []string, out io.Writer) error {
 	}
 	if len(strings.TrimSpace(string(key))) == 0 {
 		return errors.New("empty gateway key")
+	}
+	managed, err := validateManagedFixture(gateway.ManagedFiles, gateway.BaseURL, strings.TrimSpace(string(key)), *requireManaged)
+	if err != nil {
+		return err
 	}
 	if _, err := privateFile(filepath.Join(*dir, "config.yaml")); err != nil {
 		return fmt.Errorf("fixture config: %w", err)
@@ -158,17 +350,7 @@ func run(args []string, out io.Writer) error {
 	accounts := repository.NewAdminAccountRepository(client, sqlDB, nil)
 	// Keep each SDK scenario in its own scheduling pool. Catalog steps deliberately
 	// share one case/pool so a rejected update must preserve its prior session.
-	scenarios := []string{"default"}
-	for _, sdk := range []string{"python", "javascript"} {
-		for _, scenario := range []string{
-			"upstream429-no-retry", "upstream429-default-retry", "truncated",
-			"policy-rejections", "policy-catalog", "tool-strict-default",
-			"failed-usage-sse", "failed-usage-json", "truncated-json",
-			"incomplete-sse", "incomplete-json", "annotations-sse", "annotations-json",
-		} {
-			scenarios = append(scenarios, sdk+"/"+scenario)
-		}
-	}
+	scenarios := fixtureScenarios(managed != nil)
 	groupIDs := make([]int64, 0, len(scenarios))
 	groupByScenario := map[string]int64{}
 	accountIDs := []int64{}
@@ -184,7 +366,7 @@ func run(args []string, out io.Writer) error {
 		}
 		groupIDs = append(groupIDs, group.ID)
 		groupByScenario[scenario] = group.ID
-		account := &service.Account{Name: group.Name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": upstreamBase, "api_key": strings.TrimSpace(string(key))}, Extra: map[string]any{"openai_responses_mode": "force_responses", "openai_responses_supported": true}, Status: service.StatusActive, Schedulable: true, Concurrency: 5, Priority: 1}
+		account := &service.Account{Name: group.Name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Credentials: fixtureAccountCredentials(upstreamBase, strings.TrimSpace(string(key)), scenario, managed), Extra: map[string]any{"openai_responses_mode": "force_responses", "openai_responses_supported": true}, Status: service.StatusActive, Schedulable: true, Concurrency: 5, Priority: 1}
 		if err := accounts.CreateWithAccountGroups(ctx, account, []service.AccountGroup{{GroupID: group.ID, Priority: 1}}); err != nil {
 			return err
 		}
@@ -202,14 +384,14 @@ func run(args []string, out io.Writer) error {
 		}
 		userIDs = append(userIDs, user.ID)
 	}
-	makeKey := func(name string, userID, groupID int64) (string, error) {
+	makeKey := func(name string, userID, groupID int64) (fixtureRoleKey, error) {
 		value := "sk-fixture-" + token()
 		key := &service.APIKey{UserID: userID, GroupID: &groupID, Key: value, Name: name, Status: service.StatusActive}
 		if err := keys.Create(ctx, key); err != nil {
-			return "", err
+			return fixtureRoleKey{}, err
 		}
 		path := filepath.Join(*dir, name+".key")
-		return path, writePrivate(path, []byte(value+"\n"))
+		return fixtureRoleKey{ID: key.ID, UserID: userID, GroupID: groupID, Path: path}, writePrivate(path, []byte(value+"\n"))
 	}
 	first, err := makeKey("user-a1", userIDs[0], groupIDs[0])
 	if err != nil {
@@ -224,14 +406,43 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 	scenarioKeys := map[string]string{}
+	scenarioRoleFiles := map[string]map[string]string{}
+	scenarioRoleKeys := map[string]map[string]fixtureRoleKey{}
 	for _, scenario := range scenarios[1:] {
-		path, err := makeKey(strings.ReplaceAll(scenario, "/", "-"), userIDs[0], groupByScenario[scenario])
+		name := strings.ReplaceAll(scenario, "/", "-")
+		groupID := groupByScenario[scenario]
+		a1, err := makeKey(name, userIDs[0], groupID)
 		if err != nil {
 			return err
 		}
-		scenarioKeys[scenario] = path
+		scenarioKeys[scenario] = a1.Path
+		if managed == nil || (!strings.Contains(scenario, "/managed-file-") && !strings.Contains(scenario, "/files-")) {
+			continue
+		}
+		roleKeys := map[string]fixtureRoleKey{"a1": a1}
+		for _, role := range []struct {
+			name            string
+			userID, groupID int64
+		}{
+			{"a2", userIDs[0], groupID}, {"b", userIDs[1], groupID}, {"c", userIDs[0], groupIDs[0]},
+		} {
+			created, err := makeKey(name+"-"+role.name, role.userID, role.groupID)
+			if err != nil {
+				return err
+			}
+			roleKeys[role.name] = created
+		}
+		roleFiles := map[string]string{}
+		for role, key := range roleKeys {
+			roleFiles[role] = key.Path
+		}
+		scenarioRoleFiles[scenario], scenarioRoleKeys[scenario] = roleFiles, roleKeys
 	}
-	manifest := map[string]any{"contract_version": 1, "source": "local", "seam": "main-auth-scheduler-gateway-bps", "main_base_url": fmt.Sprintf("http://127.0.0.1:%d/v1", cfg.Server.Port), "api_key_file": first, "same_user_key_file": same, "other_user_key_file": other, "scenario_api_key_files": scenarioKeys, "main_commit": *commit, "gateway_commit": gateway.Commit, "gateway_base_url": gateway.BaseURL, "bps_metrics_url": gateway.MetricsURL, "model": *model, "data_dir": *dir, "resources": map[string]any{"users": userIDs, "groups": groupIDs, "accounts": accountIDs, "scenario_groups": groupByScenario, "scenario_accounts": accountByScenario}}
+	manifest := map[string]any{"contract_version": 1, "source": "local", "seam": "main-auth-scheduler-gateway-bps", "main_base_url": fmt.Sprintf("http://127.0.0.1:%d/v1", cfg.Server.Port), "api_key_file": first.Path, "same_user_key_file": same.Path, "other_user_key_file": other.Path, "scenario_api_key_files": scenarioKeys, "main_commit": *commit, "gateway_commit": gateway.Commit, "gateway_base_url": gateway.BaseURL, "bps_metrics_url": gateway.MetricsURL, "model": *model, "data_dir": *dir, "resources": map[string]any{"users": userIDs, "groups": groupIDs, "accounts": accountIDs, "scenario_groups": groupByScenario, "scenario_accounts": accountByScenario, "scenario_role_keys": scenarioRoleKeys}}
+	if managed != nil {
+		manifest["scenario_role_key_files"] = scenarioRoleFiles
+		manifest["managed_files"] = map[string]any{"contract": managed.Description.Contract, "json_profile": managed.Description.JSONProfile, "identity": managed.Description.Identity, "description_sha256": managed.DescriptionSHA256}
+	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
