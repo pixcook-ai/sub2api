@@ -170,7 +170,7 @@ func TestManagedFixtureAccountsUseActualExplicitCapabilityGate(t *testing.T) {
 			BackendID: "fixture-backend", SubjectFingerprint: "sha256:" + strings.Repeat("a", 64), CredentialGeneration: "fixture-generation",
 		}},
 	}
-	for _, scenario := range []string{"python/managed-file-json", "javascript/managed-file-large-sse"} {
+	for _, scenario := range []string{"python/managed-file-json", "javascript/managed-file-large-sse", "python/managed-file-inline-json", "javascript/managed-file-inline-large-json"} {
 		account := &service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 5,
 			Credentials: fixtureAccountCredentials("http://127.0.0.1:8790/v1", "public-key", scenario, managed),
 			Extra:       map[string]any{"openai_responses_mode": "force_responses", "openai_responses_supported": true},
@@ -231,7 +231,35 @@ func TestStoredFixtureScenariosAppendWithoutChangingExistingPools(t *testing.T) 
 	}
 }
 
+func TestInlineFixtureScenariosComposeAfterStoredWithoutChangingExistingPools(t *testing.T) {
+	base := appendStoredFixtureScenarios(fixtureScenarios(true))
+	original := append([]string(nil), base...)
+	combined := appendInlineFixtureScenarios(base)
+	if len(combined) != len(original)+14 {
+		t.Fatalf("inline scenarios added %d entries, want 14", len(combined)-len(original))
+	}
+	for i, scenario := range original {
+		if combined[i] != scenario {
+			t.Fatalf("existing scenario %d changed from %s to %s", i, scenario, combined[i])
+		}
+	}
+	for i, scenario := range []string{"managed-file-inline-json", "managed-file-inline-sse", "managed-file-inline-large-json", "managed-file-inline-mixed-json", "managed-file-inline-mixed-sse", "managed-file-inline-invalid-batch", "managed-file-inline-owner-deny"} {
+		if combined[len(original)+i] != "python/"+scenario || combined[len(original)+7+i] != "javascript/"+scenario {
+			t.Fatalf("inline scenario %s is missing or assigned to a shared pool", scenario)
+		}
+	}
+}
+
 func TestCLIStoredFixtureRequiresVerifiedControlPlaneBeforeDatabase(t *testing.T) {
+	testOptionalFixtureRequiresVerifiedControlPlane(t, "--require-stored-responses")
+}
+
+func TestCLIInlineFixtureRequiresVerifiedControlPlaneBeforeDatabase(t *testing.T) {
+	testOptionalFixtureRequiresVerifiedControlPlane(t, "--require-inline-files")
+}
+
+func testOptionalFixtureRequiresVerifiedControlPlane(t *testing.T, option string) {
+	t.Helper()
 	for _, missing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "verified", true: "missing"}[missing], func(t *testing.T) {
 			dir, gateway := managedSeedInputs(t)
@@ -247,13 +275,13 @@ func TestCLIStoredFixtureRequiresVerifiedControlPlaneBeforeDatabase(t *testing.T
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			err = run([]string{"--fixture-dir", dir, "--gateway-manifest", path, "--fixture-out", filepath.Join(dir, "seed.json"), "--main-commit", "test", "--require-stored-responses"}, &out)
+			err = run([]string{"--fixture-dir", dir, "--gateway-manifest", path, "--fixture-out", filepath.Join(dir, "seed.json"), "--main-commit", "test", option}, &out)
 			want := "fixture config"
 			if missing {
 				want = "managed fixture"
 			}
 			if err == nil || !strings.Contains(err.Error(), want) || out.Len() != 0 {
-				t.Fatalf("stored flag reached wrong setup boundary: %v, output bytes %d", err, out.Len())
+				t.Fatalf("%s reached wrong setup boundary: %v, output bytes %d", option, err, out.Len())
 			}
 		})
 	}

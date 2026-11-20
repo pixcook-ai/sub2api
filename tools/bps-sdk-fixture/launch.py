@@ -479,7 +479,8 @@ def launch(args, gateway):
                                      "--model", args.model, "--main-commit", commit,
                                      "--fixture-out", str(seed_manifest),
                                      *(["--require-managed-files"] if args.require_managed_files else []),
-                                     *(["--require-stored-responses"] if getattr(args, "require_stored_responses", False) else [])], env=environment,
+                                     *(["--require-stored-responses"] if getattr(args, "require_stored_responses", False) else []),
+                                     *(["--require-inline-files"] if getattr(args, "require_inline_files", False) else [])], env=environment,
                                     stdout=log, stderr=subprocess.STDOUT)
         if result.returncode:
             raise RuntimeError("fixture seed failed; inspect private seed.log")
@@ -583,8 +584,9 @@ def main():
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--require-managed-files", action="store_true")
     parser.add_argument("--require-stored-responses", action="store_true")
+    parser.add_argument("--require-inline-files", action="store_true")
     args = parser.parse_args()
-    args.require_managed_files = args.require_managed_files or args.require_stored_responses
+    args.require_managed_files = args.require_managed_files or args.require_stored_responses or args.require_inline_files
     try:
         gateway = gateway_inputs(args.gateway_manifest, args.require_managed_files) if args.gateway_manifest else None
         if args.gateway_repo and not (Path(args.gateway_repo) / "scripts/sdk-conformance/fixture.py").is_file():

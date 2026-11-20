@@ -388,7 +388,7 @@ while True:
             self.assertTrue(LAUNCHER["launcher_matches_checkout"](repository, b"approved launcher\n"))
             self.assertFalse(LAUNCHER["launcher_matches_checkout"](repository, b"different launcher\n"))
 
-    def invoke(self, directory, *, gateway="http://127.0.0.1:8790", metrics="http://127.0.0.1:8791/metrics", key_mode=0o600, existing_output=False, managed=None, require_managed=False):
+    def invoke(self, directory, *, gateway="http://127.0.0.1:8790", metrics="http://127.0.0.1:8791/metrics", key_mode=0o600, existing_output=False, managed=None, require_managed=False, require_inline=False):
         root = Path(directory)
         key = root / "gateway.key"
         key.write_text("synthetic-fixture-key\n")
@@ -409,8 +409,16 @@ while True:
             sys.executable, str(Path(__file__).with_name("launch.py")),
             "--gateway-manifest", str(manifest), "--out", str(output), "--validate-only",
             *(["--require-managed-files"] if require_managed else []),
+            *(["--require-inline-files"] if require_inline else []),
         ], text=True, capture_output=True)
         return result, output
+
+    def test_required_inline_contract_rejects_missing_managed_control_before_services(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output = self.invoke(directory, require_inline=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("managed_files contract is required", result.stderr)
+            self.assertFalse(output.exists())
 
     def test_required_managed_contract_is_rejected_before_services(self):
         with tempfile.TemporaryDirectory() as directory:

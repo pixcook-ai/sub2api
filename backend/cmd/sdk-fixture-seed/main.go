@@ -119,6 +119,15 @@ func appendStoredFixtureScenarios(scenarios []string) []string {
 	return scenarios
 }
 
+func appendInlineFixtureScenarios(scenarios []string) []string {
+	for _, sdk := range []string{"python", "javascript"} {
+		for _, scenario := range []string{"managed-file-inline-json", "managed-file-inline-sse", "managed-file-inline-large-json", "managed-file-inline-mixed-json", "managed-file-inline-mixed-sse", "managed-file-inline-invalid-batch", "managed-file-inline-owner-deny"} {
+			scenarios = append(scenarios, sdk+"/"+scenario)
+		}
+	}
+	return scenarios
+}
+
 func fixtureAccountCredentials(upstream, key, scenario string, managed *managedFixture) map[string]any {
 	credentials := map[string]any{"base_url": upstream, "api_key": key}
 	if managed != nil && strings.Contains(scenario, "/managed-file-") {
@@ -273,6 +282,7 @@ func run(args []string, out io.Writer) error {
 	output := fs.String("fixture-out", "", "")
 	requireManaged := fs.Bool("require-managed-files", false, "")
 	requireStored := fs.Bool("require-stored-responses", false, "")
+	requireInline := fs.Bool("require-inline-files", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -334,7 +344,7 @@ func run(args []string, out io.Writer) error {
 	if len(strings.TrimSpace(string(key))) == 0 {
 		return errors.New("empty gateway key")
 	}
-	managed, err := validateManagedFixture(gateway.ManagedFiles, gateway.BaseURL, strings.TrimSpace(string(key)), *requireManaged || *requireStored)
+	managed, err := validateManagedFixture(gateway.ManagedFiles, gateway.BaseURL, strings.TrimSpace(string(key)), *requireManaged || *requireStored || *requireInline)
 	if err != nil {
 		return err
 	}
@@ -372,6 +382,9 @@ func run(args []string, out io.Writer) error {
 	scenarios := fixtureScenarios(managed != nil)
 	if *requireStored {
 		scenarios = appendStoredFixtureScenarios(scenarios)
+	}
+	if *requireInline {
+		scenarios = appendInlineFixtureScenarios(scenarios)
 	}
 	groupIDs := make([]int64, 0, len(scenarios))
 	groupByScenario := map[string]int64{}
@@ -468,6 +481,10 @@ func run(args []string, out io.Writer) error {
 	if *requireStored {
 		manifest["stored_responses"] = map[string]any{"contract": "local-responses/1", "identity": managed.Description.Identity,
 			"scope": "plain-text-local-storage", "preflight": "required-not-yet-accepted"}
+	}
+	if *requireInline {
+		manifest["inline_files"] = map[string]any{"contract": "bps-inline-files/1", "identity": managed.Description.Identity,
+			"scope": "request-private-file-data"}
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
