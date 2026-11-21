@@ -1,0 +1,16 @@
+name: Pixcook production CD (disabled)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disabled:
+    # Enabling production requires a reviewed code change plus environment approval.
+    if: ${{ false && vars.PROD_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo 'Production delivery is not enabled.'

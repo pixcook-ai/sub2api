@@ -66,3 +66,10 @@ rtk docker compose --env-file /site/.env --project-name ORIGINAL_PROJECT -f /sit
 ```
 
 回滚时先满足上面的数据库与质量隔离兼容边界，将 PIXCOOK_IMAGE 换回记录的旧 digest，然后重复验证与应用替换。路径、服务名和 project 均需与现场对应；配置验证器不会代做停流量、备份或恢复。
+
+
+## 双环境自动交付
+
+pixcook分支推送触发开发CD，完整candidate门禁通过后构建Linux amd64镜像，以自有digest和完整源码SHA送往dev Environment。专用SSH账号只接受固定dev部署命令，无shell/转发；部署前备份，隔离克隆恢复与迁移成功后才替换开发应用，并核对运行digest/二进制commit和公网前端资源。详见deploy/pixcook/cicd-deploy.md。
+
+production Environment已预置但保持禁用：workflow为constant-false，PROD_DEPLOY_ENABLED=false，分支策略production-disabled，无生产SSH凭证。该配置不修改pixcook.ai的DNS、Nginx、容器、数据库或现有流量；未来启用必须单独审查配置和迁移方案。
