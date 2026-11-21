@@ -22,6 +22,9 @@ def validate(model, mode, baseline=None):
         errors.append("SUB2API_UPDATE_MODE must be image")
     for key in ("JWT_SECRET", "TOTP_ENCRYPTION_KEY", "DATABASE_PASSWORD"):
         value = str(env.get(key) or "")
+        if key == "TOTP_ENCRYPTION_KEY" and mode == "existing" and baseline is not None and not value and not baseline.get("services", {}).get("sub2api", {}).get("environment", {}).get(key):
+            # Preserve an existing unconfigured feature without creating identity.
+            continue
         if len(value) < (32 if key != "DATABASE_PASSWORD" else 1) or value.startswith("CHANGE_ME"):
             errors.append(key + " must be explicitly configured")
     ports = app.get("ports", [])

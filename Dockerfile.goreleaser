@@ -7,6 +7,12 @@
 
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
+ARG GOLANG_IMAGE=golang:1.27.4-alpine
+
+FROM --platform=$BUILDPLATFORM ${GOLANG_IMAGE} AS migration-manifest
+COPY deploy/pixcook/image-manifest/main.go /tmp/image-manifest.go
+COPY backend/migrations /tmp/migrations
+RUN go run /tmp/image-manifest.go /tmp/migrations /tmp/migration-checksums.json
 
 FROM ${POSTGRES_IMAGE} AS pg-client
 
@@ -44,6 +50,7 @@ WORKDIR /app
 
 # Copy the pre-built binary and runtime fallback resources from GoReleaser
 COPY sub2api /app/sub2api
+COPY --from=migration-manifest /tmp/migration-checksums.json /app/migration-checksums.json
 COPY --chown=sub2api:sub2api backend/resources /app/resources
 
 # Create data directory

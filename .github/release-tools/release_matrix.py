@@ -173,6 +173,8 @@ def contexts(args):
         (dest / 'deploy').mkdir(exist_ok=True)
         shutil.copy2('deploy/docker-entrypoint.sh', dest / 'deploy/docker-entrypoint.sh')
         shutil.copytree('backend/resources', dest / 'backend/resources', dirs_exist_ok=True)
+        shutil.copytree('backend/migrations', dest / 'backend/migrations', dirs_exist_ok=True)
+        shutil.copytree('deploy/pixcook/image-manifest', dest / 'deploy/pixcook/image-manifest', dirs_exist_ok=True)
 
 
 def main():

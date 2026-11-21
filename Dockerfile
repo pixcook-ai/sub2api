@@ -79,6 +79,8 @@ RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
 
 # Copy backend source first
 COPY backend/ ./
+COPY deploy/pixcook/image-manifest/main.go /tmp/image-manifest.go
+RUN go run /tmp/image-manifest.go /app/backend/migrations /app/migration-checksums.json
 
 # Copy frontend dist from previous stage (must be after backend copy to avoid being overwritten)
 COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
@@ -140,6 +142,7 @@ WORKDIR /app
 
 # Copy binary/resources with ownership to avoid extra full-layer chown copy
 COPY --from=backend-builder --chown=sub2api:sub2api /app/sub2api /app/sub2api
+COPY --from=backend-builder /app/migration-checksums.json /app/migration-checksums.json
 COPY --from=backend-builder --chown=sub2api:sub2api /app/backend/resources /app/resources
 
 # Create data directory

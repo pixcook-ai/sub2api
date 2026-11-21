@@ -118,11 +118,18 @@ class ReleaseMatrixTest(unittest.TestCase):
         Path('deploy/docker-entrypoint.sh').write_text('#!/bin/sh\nexec /app/sub2api\n')
         Path('backend/resources').mkdir()
         Path('backend/resources/data').write_text('fixture')
+        Path('backend/migrations').mkdir()
+        Path('backend/migrations/001_test.sql').write_text(' SELECT 1;\n')
+        Path('deploy/pixcook/image-manifest').mkdir(parents=True)
+        Path('deploy/pixcook/image-manifest/main.go').write_text('package main\n')
         release.contexts(args)
         for arch in ('amd64', 'arm64'):
             binary = Path('contexts') / arch / 'sub2api'
             self.assertEqual(binary.read_bytes(), b'fixture')
             self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
+            context = binary.parent
+            self.assertEqual((context / 'backend/migrations/001_test.sql').read_text(), ' SELECT 1;\n')
+            self.assertTrue((context / 'deploy/pixcook/image-manifest/main.go').is_file())
 
     def test_plan_requires_a_tag_for_publication(self):
         args = argparse.Namespace(ref='main', dry_run=False, simple=False)

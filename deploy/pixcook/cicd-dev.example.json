@@ -1,0 +1,12 @@
+{
+  "environment": "dev",
+  "compose_files": ["/opt/bps-gateway/services/sub2api/docker-compose.yml"],
+  "env_file": "/opt/bps-gateway/services/sub2api/.env",
+  "project_name": "sub2api",
+  "expected_app_container": "sub2api",
+  "database_service": "postgres",
+  "redis_service": "redis",
+  "health_url": "http://127.0.0.1:18080/health",
+  "backup_dir": "/var/backups/pixcook-dev",
+  "state_dir": "/var/lib/pixcook-cicd/dev"
+}

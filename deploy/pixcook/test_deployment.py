@@ -84,6 +84,19 @@ class DeploymentValidationTests(unittest.TestCase):
     def test_existing_requires_baseline(self):
         self.assertTrue(deployment.validate(self.fresh(), "existing"))
 
+    def test_existing_preserves_unset_totp_without_weakening_fresh_or_identity_checks(self):
+        before, after = self.fresh(), self.fresh()
+        for model in (before, after):
+            model["services"]["sub2api"]["environment"].pop("TOTP_ENCRYPTION_KEY")
+        self.assertEqual([], deployment.validate(after, "existing", baseline=before))
+        self.assertTrue(deployment.validate(after, "fresh"))
+        self.assertTrue(deployment.validate(after, "existing", baseline=self.fresh()))
+        self.assertTrue(deployment.validate(self.fresh(), "existing", baseline=before))
+        for field in ("JWT_SECRET", "DATABASE_PASSWORD"):
+            before["services"]["sub2api"]["environment"].pop(field, None)
+            after["services"]["sub2api"]["environment"].pop(field, None)
+            self.assertTrue(deployment.validate(after, "existing", baseline=before))
+
     def test_error_text_does_not_include_secret_values(self):
         before = self.fresh()
         after = self.fresh()
