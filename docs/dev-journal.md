@@ -224,3 +224,11 @@ URL历史诊断完整保留：1836额外请求因native夹具330MiB留存加200M
 - GitHub fork停用门阻止首次dispatch（422），仓库permissions和workflow.state虽显示enabled/active，网页要求重新启用。恢复Actions后真实运行44854017794全部成功；artifact sync-report.json为up_to_date，上游v0.2.23-klno.1 / 249125a7737999da2fbe561718b76aaaf189b753已在pixcook中。
 - 定时同步已配置为每日03:17 UTC（北京时间11:17）；本轮是手动dispatch验收，不宣称定时触发已实际发生。无新增上游变更，未创建候选PR，真实分支写入及PR CI触发仍未在本轮执行。
 - 测试环境、生产及旧localhost:18080实例均未切换。此前凭证缺失和匿名401为历史状态，由本节与更新后的verification JSON替代。
+
+
+## 2026-11-21 — 双环境CI/CD完成，开发上线、生产禁用
+
+- 源码554f62ca94390f424e9546c43ef39ab6c3a214b3的开发CD44860155823、普通CI44860155972、安全扫描44860155925成功；固定digest为663fb85c07e1a7638bf16275c614170fb162e9843537a3439d3a5f4b1be728cb，artifact14690638161记录运行来源与公网资源证据。
+- dev于03:53:16 UTC（11:53:16 CST）完成备份、隔离恢复试迁移和切换。独立回读328/328迁移清单匹配，管理员登录/Tibo设置200；浏览器保留登录并显示新版本和Tibo选项。3账号、1用户、凭证/代理关联、env/Compose/Nginx与其他容器均保留。
+- 备份保留在 /var/backups/pixcook-dev/20261121T035253Z-1e77af79，试迁移资源已清理。dev专用受限SSH只允许固定开发部署；production配置硬禁用、变量false、无生产秘密，DNS仍51.210.34.93、health200且摘要未变，未连接或改动生产服务器。
+- 双审已完成，隔离Redis继承YAML认证/TLS的P2已修复并复审；首轮CD44858448112人工取消，保留历史。仅归档Markdown不再部署。完整证据及未执行真实模型/计费、生产迁移边界见 docs/tasks/pixcook-dev-cicd-20261121.md。
