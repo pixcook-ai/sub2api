@@ -263,16 +263,17 @@ class Deployment:
         with open(self.backup / "database.dump", "rb") as source:
             self.command(["docker", "exec", "-i", db_name, "pg_restore", "-U", "preflight", "-d", "preflight", "--no-owner", "--no-acl", "--exit-on-error"], stdin=source, timeout=1800)
         self.check_migrations(db_name, db_env)
-        redis_name = self.start_clone("redis", self.redis["Image"], {})
+        redis_password = secrets.token_hex(32)
+        redis_name = self.start_clone("redis", self.redis["Image"], {"REDIS_PASSWORD": redis_password}, command=["sh", "-c", "exec redis-server --requirepass \"$REDIS_PASSWORD\""])
         shutil.copytree(self.backup / "app-data", self.preflight_dir / "app-data", symlinks=True)
         app_env = dict(self.runtime_env)
-        app_env.update({"DATABASE_HOST": db_name, "DATABASE_PORT": "5432", "DATABASE_USER": "preflight", "DATABASE_PASSWORD": self.clone_password, "DATABASE_DBNAME": "preflight", "DATABASE_SSLMODE": "disable", "REDIS_HOST": redis_name, "REDIS_PORT": "6379", "REDIS_USERNAME": "", "REDIS_PASSWORD": "", "REDIS_DB": "0", "SERVER_HOST": "0.0.0.0", "SERVER_PORT": "8080", "SUB2API_UPDATE_MODE": "image", "AUTO_SETUP": "false"})
+        app_env.update({"DATABASE_HOST": db_name, "DATABASE_PORT": "5432", "DATABASE_USER": "preflight", "DATABASE_PASSWORD": self.clone_password, "DATABASE_DBNAME": "preflight", "DATABASE_SSLMODE": "disable", "REDIS_HOST": redis_name, "REDIS_PORT": "6379", "REDIS_USERNAME": "default", "REDIS_PASSWORD": redis_password, "REDIS_ENABLE_TLS": "false", "REDIS_DB": "0", "SERVER_HOST": "0.0.0.0", "SERVER_PORT": "8080", "SUB2API_UPDATE_MODE": "image", "AUTO_SETUP": "false"})
         app_name = self.start_clone("app", self.image, app_env, ["--mount", "type=bind,src=" + str(self.preflight_dir / "app-data") + ",dst=/app/data"])
         self.wait_command(["docker", "exec", app_name, "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:8080/health"], attempts=120)
         self.check_migrations(db_name, db_env, complete=True)
         self.command(["docker", "stop", "--time", "30", app_name])
 
-    def start_clone(self, suffix, image, environment, extra=()):
+    def start_clone(self, suffix, image, environment, extra=(), command=()):
         name = "pixcook-preflight-" + self.run_id.lower() + "-" + suffix
         env_file = self.preflight_dir / (suffix + ".env")
         if any("\n" in str(value) or "\r" in str(value) for value in environment.values()):
@@ -283,7 +284,7 @@ class Deployment:
             self.clone_password = environment["POSTGRES_PASSWORD"]
         # Names are reserved before creation so a partially created container is cleaned.
         self.created_containers.append(name)
-        self.command(["docker", "run", "-d", "--name", name, "--label", "pixcook.cicd.preflight=" + self.run_id, "--network", self.created_network, "--pull", "never", "--env-file", str(env_file), *extra, image])
+        self.command(["docker", "run", "-d", "--name", name, "--label", "pixcook.cicd.preflight=" + self.run_id, "--network", self.created_network, "--pull", "never", "--env-file", str(env_file), *extra, image, *command])
         return name
 
     def wait_command(self, command, attempts=60):

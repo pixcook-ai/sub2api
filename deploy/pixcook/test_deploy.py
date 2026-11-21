@@ -104,7 +104,8 @@ class DeployTests(unittest.TestCase):
             instance = deploy.Deployment.__new__(deploy.Deployment)
             instance.backup = pathlib.Path(directory)
             (instance.backup / "app-data").mkdir()
-            (instance.backup / "app-data" / "config.yaml").write_text("server: {}\n")
+            persisted_config = "redis:\n  username: live-user\n  password: live-password\n  enable_tls: true\n"
+            (instance.backup / "app-data" / "config.yaml").write_text(persisted_config)
             (instance.backup / "database.dump").write_bytes(b"custom-format-backup")
             instance.db, instance.redis = {"Image": "sha256:pg17"}, {"Image": "sha256:redis7"}
             instance.runtime_env = {"DATABASE_HOST": "LIVE_DB", "DATABASE_PASSWORD": "LIVE_SECRET", "REDIS_HOST": "LIVE_REDIS", "JWT_SECRET": "fixed-jwt"}
@@ -130,6 +131,16 @@ class DeployTests(unittest.TestCase):
             app_environment = (instance.preflight_dir / "app.env").read_text()
             self.assertIn("DATABASE_HOST=pixcook-preflight-test-run-db\n", app_environment)
             self.assertIn("REDIS_HOST=pixcook-preflight-test-run-redis\n", app_environment)
+            self.assertIn("REDIS_USERNAME=default\n", app_environment)
+            self.assertIn("REDIS_ENABLE_TLS=false\n", app_environment)
+            redis_environment = dict(line.split("=", 1) for line in (instance.preflight_dir / "redis.env").read_text().splitlines())
+            password = redis_environment["REDIS_PASSWORD"]
+            self.assertRegex(password, r"^[0-9a-f]{64}$")
+            self.assertIn("REDIS_PASSWORD=" + password + "\n", app_environment)
+            redis_run = next(call for call in runs if "sha256:redis7" in call)
+            self.assertEqual(redis_run[-4:], ["sha256:redis7", "sh", "-c", 'exec redis-server --requirepass "$REDIS_PASSWORD"'])
+            self.assertTrue(all(password not in argument for call in calls for argument in call))
+            self.assertEqual((instance.preflight_dir / "app-data" / "config.yaml").read_text(), persisted_config)
             self.assertNotIn("LIVE_", app_environment)
             self.assertIn("JWT_SECRET=fixed-jwt\n", app_environment)
             self.assertEqual(migrations, [("pixcook-preflight-test-run-db", False), ("pixcook-preflight-test-run-db", True)])
