@@ -44,3 +44,11 @@
 - 发布产物记录的镜像：`ghcr.io/pixcook-ai/sub2api@sha256:52d67167e517297b401cedf57b8960e5425c2f16d6392caabe0e95f357db9ee5`。来源和manifest已保存到docs/verification/pixcook-release-20261121.json。
 - 匿名GHCR读取返回401，当前CLI凭证无read:packages，临时私有Docker配置认证后仍无法读manifest；未保存/上传个人凭证。需具有read:packages的部署凭证或公开包可见性后才能验收服务器拉取。发布artifact来源已验证，独立拉取未通过。
 - 专用SYNC_GITHUB_TOKEN仍缺失，自动同步尚未启用；测试环境和生产未切换，原18080本地测试服务未更新。
+
+## 2026-11-21 — 镜像拉取与自动同步配置完成
+
+- 自有 GHCR sub2api 包由 private 改为 public；组织 Public package creation 仅在变更期间临时开启，完成后恢复禁用。匿名 OCI manifest GET 返回200，内容SHA256与已发布digest一致，linux/amd64子manifest与发布artifact一致。未下载镜像层或在服务器拉取。
+- 新建本仓专用 fine-grained PAT，保存为 Actions Secret `SYNC_GITHUB_TOKEN`；仅授权 pixcook-ai/sub2api 的 Contents、Pull requests、Workflows写入和必需Metadata读取，无组织权限。有效期至2027-02-19，届时需轮换；没有复制个人CLI token或在仓库记录令牌。
+- GitHub fork停用门阻止首次dispatch（422），仓库permissions和workflow.state虽显示enabled/active，网页要求重新启用。恢复Actions后真实运行44854017794全部成功；artifact sync-report.json为up_to_date，上游v0.2.23-klno.1 / 249125a7737999da2fbe561718b76aaaf189b753已在pixcook中。
+- 定时同步已配置为每日03:17 UTC（北京时间11:17）；本轮是手动dispatch验收，不宣称定时触发已实际发生。无新增上游变更，未创建候选PR，真实分支写入及PR CI触发仍未在本轮执行。
+- 测试环境、生产及旧localhost:18080实例均未切换。此前凭证缺失和匿名401为历史状态，由本节与更新后的verification JSON替代。

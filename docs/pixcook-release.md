@@ -35,7 +35,9 @@
 
 ## 本次范围
 
-当前源码集成与本地验收记录在 `docs/tasks/pixcook-release-integration-20261120.md`。尚未完成的远程CI、镜像发布、真实上游灰度及生产切换须分别记录，不能以脚本存在代替执行证据。
+当前源码集成与验收记录在 `docs/tasks/pixcook-release-integration-20261120.md`。自有 v0.2.23-pixcook.1 已完成远程CI和镜像发布，公开GHCR manifest匿名读取已验证；真实上游账号灰度、镜像层/服务器拉取及生产切换尚未执行。
+
+自动同步凭证 `SYNC_GITHUB_TOKEN` 已配置，仅授权本仓 Contents、Pull requests、Workflows写入及Metadata读取，有效期至2027-02-19，需到期前轮换。每日03:17 UTC（北京时间11:17）检查稳定上游；有变更时仅提出候选PR，不自动合并、发布或部署。首次真实手动运行44854017794成功，结果up_to_date；新候选分支/PR及其CI触发留待上游有变更时验证。
 
 
 ## 可执行入口

@@ -16,7 +16,44 @@
       "sha": "249125a7737999da2fbe561718b76aaaf189b753"
     }
   },
-  "registry_read_verification": "anonymous pull 401; local GitHub credential lacks read:packages; deployment pull unverified",
+  "registry_read_verification": "anonymous OCI manifest GET 200; sha256 matches published digest; linux/amd64 child manifest matches release artifact; image layers/server pull not exercised",
   "production_deployed": false,
-  "sync_credential_configured": false
+  "sync_credential_configured": true,
+  "package_visibility": "public",
+  "organization_public_package_creation_policy": "restored to disabled after this package was made public",
+  "sync_credential": {
+    "name": "SYNC_GITHUB_TOKEN",
+    "kind": "dedicated fine-grained PAT",
+    "resource_owner": "pixcook-ai",
+    "repositories": [
+      "pixcook-ai/sub2api"
+    ],
+    "permissions": {
+      "contents": "write",
+      "pull_requests": "write",
+      "workflows": "write",
+      "metadata": "read"
+    },
+    "expires_on": "2027-02-19",
+    "personal_cli_token_copied": false
+  },
+  "sync_verification": {
+    "run_id": 44854017794,
+    "url": "https://github.com/pixcook-ai/sub2api/actions/runs/44854017794",
+    "conclusion": "success",
+    "report": {
+      "status": "up_to_date",
+      "base_sha": "b4f824d38b7eaaabd4c815e6a2fed2f8abac7ee6",
+      "upstream_sha": "249125a7737999da2fbe561718b76aaaf189b753",
+      "upstream_tag": "v0.2.23-klno.1",
+      "upstream_repository": "KlN-4096/sub2api",
+      "candidate_branch": "pixcook-sync/b4f824d38b7eaaabd4c815e6a2fed2f8abac7ee6-249125a7737999da2fbe561718b76aaaf189b753",
+      "integration_branch": "pixcook"
+    },
+    "new_candidate_pr_created": false,
+    "candidate_push_and_pr_ci_live_verified": false,
+    "schedule_utc": "17 3 * * *",
+    "schedule_asia_shanghai": "daily 11:17",
+    "fork_actions_reenabled": true
+  }
 }
